@@ -22,6 +22,7 @@ interface FileData {
 
 const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "avif"]);
 const AUDIO_EXTS = new Set(["mp3", "wav", "ogg", "oga", "opus", "m4a", "aac", "flac", "weba", "webm"]);
+const DOCUMENT_EXTS = new Set(["pdf", "doc", "docx"]);
 
 function isImagePath(filePath: string): boolean {
   const base = getFileName(filePath);
@@ -33,6 +34,12 @@ function isAudioPath(filePath: string): boolean {
   const base = getFileName(filePath);
   const ext = base.toLowerCase().split(".").pop() ?? "";
   return AUDIO_EXTS.has(ext);
+}
+
+function isDocumentPath(filePath: string): boolean {
+  const base = getFileName(filePath);
+  const ext = base.toLowerCase().split(".").pop() ?? "";
+  return DOCUMENT_EXTS.has(ext);
 }
 
 type DiffLine =
@@ -540,9 +547,20 @@ function TextFileViewer({ filePath, cwd }: Props) {
   const [previewMode, setPreviewMode] = useState(false);
   const [viewMode, setViewMode] = useState<"source" | "diff">("source");
   const [wrapLines, setWrapLines] = useState(false);
+  const [editMode, setEditMode] = useState(false);
+  const [draft, setDraft] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
+  const [docPreviewHtml, setDocPreviewHtml] = useState<string | null>(null);
+  const [docPreviewError, setDocPreviewError] = useState<string | null>(null);
+  const [docPreviewLoading, setDocPreviewLoading] = useState(false);
   const [watching, setWatching] = useState(false);
   const [changeCount, setChangeCount] = useState(0);
   const esRef = useRef<EventSource | null>(null);
+  const isDocument = isDocumentPath(filePath);
+  const isPdf = filePath.toLowerCase().endsWith(".pdf");
+  const isWord = filePath.toLowerCase().endsWith(".doc") || filePath.toLowerCase().endsWith(".docx");
 
   const fetchContent = useCallback((filePath: string, isRefresh = false) => {
     const encoded = encodeFilePathForApi(filePath);
@@ -559,14 +577,60 @@ function TextFileViewer({ filePath, cwd }: Props) {
             return d;
           });
           setChangeCount((c) => c + 1);
+          if (!editMode) {
+            setDraft(d.content);
+          }
         } else {
           setData(d);
+          setDraft(d.content);
         }
         return d;
       })
       .catch((e) => {
         setError(String(e));
         return null;
+      });
+  }, [editMode]);
+
+  const fetchMeta = useCallback((filePath: string) => {
+    const encoded = encodeFilePathForApi(filePath);
+    return fetch(`/api/files/${encoded}?type=meta`)
+      .then((r) => r.json())
+      .then((d: { size: number; language: string; mime?: string; error?: string }) => {
+        if (d.error) {
+          setError(d.error);
+          return null;
+        }
+        setData({ content: "", language: d.language, size: d.size });
+        return d;
+      })
+      .catch((e) => {
+        setError(String(e));
+        return null;
+      });
+  }, []);
+
+  const fetchDocPreview = useCallback((filePath: string) => {
+    const encoded = encodeFilePathForApi(filePath);
+    setDocPreviewLoading(true);
+    setDocPreviewError(null);
+    setDocPreviewHtml(null);
+    return fetch(`/api/files/${encoded}?type=preview`)
+      .then(async (res) => {
+        if (!res.ok) {
+          const json = await res.json().catch(() => null);
+          throw new Error(json?.error || res.statusText);
+        }
+        return res.text();
+      })
+      .then((html) => {
+        setDocPreviewHtml(html);
+      })
+      .catch((e) => {
+        setDocPreviewError(String(e));
+      })
+      .finally(() => {
+        setDocPreviewLoading(false);
       });
   }, []);
 
@@ -581,15 +645,25 @@ function TextFileViewer({ filePath, cwd }: Props) {
     setWrapLines(false);
     setChangeCount(0);
     setWatching(false);
+    setDocPreviewHtml(null);
+    setDocPreviewError(null);
+    setDocPreviewLoading(false);
 
     if (esRef.current) {
       esRef.current.close();
       esRef.current = null;
     }
 
-    fetchContent(filePath).then((d) => {
-      if (d?.language === "markdown") setPreviewMode(true);
-    }).finally(() => setLoading(false));
+    if (isDocument) {
+      fetchMeta(filePath).finally(() => setLoading(false));
+      if (isWord) {
+        fetchDocPreview(filePath);
+      }
+    } else {
+      fetchContent(filePath).then((d) => {
+        if (d?.language === "markdown") setPreviewMode(true);
+      }).finally(() => setLoading(false));
+    }
 
     // Set up SSE watch
     const encoded = encodeFilePathForApi(filePath);
@@ -601,7 +675,11 @@ function TextFileViewer({ filePath, cwd }: Props) {
     });
 
     es.addEventListener("change", () => {
-      fetchContent(filePath, true);
+      if (isDocument) {
+        fetchMeta(filePath).then(() => setChangeCount((c) => c + 1));
+      } else {
+        fetchContent(filePath, true);
+      }
     });
 
     es.addEventListener("error", () => {
@@ -616,7 +694,7 @@ function TextFileViewer({ filePath, cwd }: Props) {
       es.close();
       esRef.current = null;
     };
-  }, [filePath, fetchContent]);
+  }, [filePath, fetchContent, fetchMeta]);
 
   if (loading) {
     return (
@@ -661,7 +739,7 @@ function TextFileViewer({ filePath, cwd }: Props) {
           {getRelativeFilePath(filePath, cwd)}
         </span>
         <span style={{ marginLeft: "auto" }}>{data.language}</span>
-        {viewMode === "source" && <span>{lines.length} lines</span>}
+        {viewMode === "source" && !isDocument && <span>{lines.length} lines</span>}
         <span>{formatSize(data.size)}</span>
 
         {/* Live watch indicator */}
@@ -755,6 +833,97 @@ function TextFileViewer({ filePath, cwd }: Props) {
           </div>
         )}
 
+        {/* Save / edit controls */}
+        {!isDocument ? (
+          editMode ? (
+            <>
+              <button
+                onClick={async () => {
+                  if (!draft) return;
+                  setSaving(true);
+                  setSaveError(null);
+                  setSaveSuccess(null);
+                  const encoded = encodeFilePathForApi(filePath);
+                  try {
+                    const res = await fetch(`/api/files/${encoded}`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ content: draft }),
+                    });
+                    const result = await res.json();
+                    if (!res.ok) {
+                      throw new Error(result?.error || res.statusText);
+                    }
+                    setData((prev) => prev ? { ...prev, content: draft, size: result.size ?? prev.size } : { content: draft, language: data.language, size: result.size ?? data.size });
+                    setPrevContent(data.content);
+                    setEditMode(false);
+                    setSaveSuccess("Saved");
+                    window.setTimeout(() => setSaveSuccess(null), 3000);
+                  } catch (e) {
+                    setSaveError(String(e));
+                  } finally {
+                    setSaving(false);
+                  }
+                }}
+                disabled={saving || draft === null || draft === data.content}
+                title="Save file"
+                style={{
+                  padding: "2px 8px", fontSize: 11, cursor: saving ? "not-allowed" : "pointer",
+                  background: saving ? "var(--bg)" : "var(--bg-selected)",
+                  color: saving ? "var(--text-muted)" : "var(--text)",
+                  border: "1px solid var(--border)", borderRadius: 5,
+                  fontWeight: 600,
+                }}
+              >
+                {saving ? "Saving..." : "Save"}
+              </button>
+              <button
+                onClick={() => {
+                  setEditMode(false);
+                  setDraft(data.content);
+                  setSaveError(null);
+                }}
+                title="Cancel editing"
+                style={{
+                  padding: "2px 8px", fontSize: 11, cursor: "pointer",
+                  background: "var(--bg-hover)",
+                  color: "var(--text-muted)",
+                  border: "1px solid var(--border)", borderRadius: 5,
+                  fontWeight: 400,
+                }}
+              >
+                Cancel
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={() => {
+                setEditMode(true);
+                setDraft(data.content);
+                setSaveError(null);
+                setSaveSuccess(null);
+              }}
+              title="Edit file content"
+              style={{
+                padding: "2px 8px", fontSize: 11, cursor: "pointer",
+                background: "var(--bg-hover)",
+                color: "var(--text-muted)",
+                border: "1px solid var(--border)", borderRadius: 5,
+                fontWeight: 400,
+              }}
+            >
+              Edit
+            </button>
+          )
+        ) : null}
+
+        {saveSuccess && (
+          <span style={{ color: "#4ade80", fontWeight: 600 }}>{saveSuccess}</span>
+        )}
+        {saveError && (
+          <span style={{ color: "#f87171", fontWeight: 600 }}>{saveError}</span>
+        )}
+
         {/* Markdown preview/raw toggle */}
         {isMarkdown && viewMode === "source" && (
           <div style={{ display: "flex", borderRadius: 5, overflow: "hidden", border: "1px solid var(--border)" }}>
@@ -790,7 +959,7 @@ function TextFileViewer({ filePath, cwd }: Props) {
           <DiffView oldContent={prevContent!} newContent={data.content} language={data.language} />
         ) : isHtml && previewMode ? (
           <iframe
-            srcDoc={data.content}
+            srcDoc={editMode ? draft ?? data.content : data.content}
             sandbox="allow-scripts"
             style={{ width: "100%", height: "100%", border: "none", background: "var(--bg)" }}
             title="HTML preview"
@@ -800,8 +969,128 @@ function TextFileViewer({ filePath, cwd }: Props) {
             className="markdown-body markdown-file-preview"
             style={{ padding: "24px 32px", maxWidth: 800 }}
           >
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{data.content}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{editMode ? draft ?? data.content : data.content}</ReactMarkdown>
           </div>
+        ) : isDocument ? (
+          isPdf ? (
+            <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "var(--bg)" }}>
+              <div style={{ padding: 16, borderBottom: "1px solid var(--border)", background: "var(--bg)", color: "var(--text-dim)" }}>
+                PDF preview
+              </div>
+              <iframe
+                src={`/api/files/${encodeFilePathForApi(filePath)}?type=read${changeCount ? `&v=${changeCount}` : ""}`}
+                style={{ width: "100%", height: "100%", border: "none", background: "var(--bg)" }}
+                title={`Preview ${getFileName(filePath)}`}
+              />
+              <div style={{ padding: "10px 16px", borderTop: "1px solid var(--border)", fontSize: 12, color: "var(--text-dim)", background: "var(--bg-panel)" }}>
+                <a href={`/api/files/${encodeFilePathForApi(filePath)}?type=read`} target="_blank" rel="noreferrer" style={{ color: "var(--text)", textDecoration: "underline" }}>
+                  Open in new tab
+                </a>
+              </div>
+            </div>
+          ) : isWord ? (
+            <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "var(--bg)" }}>
+              <div style={{ padding: 16, borderBottom: "1px solid var(--border)", background: "var(--bg)", color: "var(--text-dim)" }}>
+                Word preview
+              </div>
+              {docPreviewLoading ? (
+                <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)" }}>
+                  Loading Word preview...
+                </div>
+              ) : docPreviewHtml ? (
+                <iframe
+                  srcDoc={docPreviewHtml}
+                  sandbox="allow-same-origin"
+                  style={{ width: "100%", height: "100%", border: "none", background: "var(--bg)" }}
+                  title={`Preview ${getFileName(filePath)}`}
+                />
+              ) : (
+                <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, background: "var(--bg)" }}>
+                  <div style={{ maxWidth: 520, textAlign: "center", color: "var(--text-dim)" }}>
+                    <p style={{ marginBottom: 8, fontSize: 14, color: "var(--text)" }}>
+                      Word 文档预览当前不可用。
+                    </p>
+                    {docPreviewError && <p style={{ marginBottom: 16, color: "#f87171" }}>{docPreviewError}</p>}
+                    <a
+                      href={`/api/files/${encodeFilePathForApi(filePath)}?type=read`}
+                      download={getFileName(filePath)}
+                      style={{
+                        display: "inline-block",
+                        padding: "8px 12px",
+                        borderRadius: 5,
+                        background: "var(--bg-selected)",
+                        color: "var(--text)",
+                        textDecoration: "none",
+                        fontWeight: 600,
+                      }}
+                    >
+                      下载文件
+                    </a>
+                  </div>
+                </div>
+              )}
+              <div style={{ padding: "10px 16px", borderTop: "1px solid var(--border)", fontSize: 12, color: "var(--text-dim)", background: "var(--bg-panel)" }}>
+                <a href={`/api/files/${encodeFilePathForApi(filePath)}?type=read`} target="_blank" rel="noreferrer" style={{ color: "var(--text)", textDecoration: "underline" }}>
+                  Open in new tab
+                </a>
+              </div>
+            </div>
+          ) : (
+            <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "var(--bg)" }}>
+              <div style={{ padding: 16, borderBottom: "1px solid var(--border)", background: "var(--bg)", color: "var(--text-dim)" }}>
+                Document preview
+              </div>
+              <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, background: "var(--bg)" }}>
+                <div style={{ maxWidth: 520, textAlign: "center", color: "var(--text-dim)" }}>
+                  <p style={{ marginBottom: 8, fontSize: 14, color: "var(--text)" }}>
+                    此文档类型可能无法在浏览器中预览。
+                  </p>
+                  <p style={{ marginBottom: 16 }}>
+                    请下载后在本机应用中打开。
+                  </p>
+                  <a
+                    href={`/api/files/${encodeFilePathForApi(filePath)}?type=read`}
+                    download={getFileName(filePath)}
+                    style={{
+                      display: "inline-block",
+                      padding: "8px 12px",
+                      borderRadius: 5,
+                      background: "var(--bg-selected)",
+                      color: "var(--text)",
+                      textDecoration: "none",
+                      fontWeight: 600,
+                    }}
+                  >
+                    下载文件
+                  </a>
+                </div>
+              </div>
+              <div style={{ padding: "10px 16px", borderTop: "1px solid var(--border)", fontSize: 12, color: "var(--text-dim)", background: "var(--bg-panel)" }}>
+                <a href={`/api/files/${encodeFilePathForApi(filePath)}?type=read`} target="_blank" rel="noreferrer" style={{ color: "var(--text)", textDecoration: "underline" }}>
+                  Open in new tab
+                </a>
+              </div>
+            </div>
+          )
+        ) : editMode ? (
+          <textarea
+            value={draft ?? data.content}
+            onChange={(e) => setDraft(e.target.value)}
+            style={{
+              width: "100%",
+              height: "100%",
+              resize: "none",
+              border: "none",
+              background: "var(--bg-panel)",
+              color: "var(--text)",
+              fontFamily: "var(--font-mono)",
+              fontSize: 13,
+              lineHeight: 1.6,
+              padding: 16,
+              outline: "none",
+              whiteSpace: "pre",
+            }}
+          />
         ) : (
           <SyntaxHighlighter
             language={data.language === "text" ? "plaintext" : data.language}

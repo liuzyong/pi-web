@@ -39,6 +39,16 @@ const AUDIO_EXT_TO_MIME: Record<string, string> = {
   webm: "audio/webm",
 };
 
+const DOCUMENT_EXT_TO_MIME: Record<string, string> = {
+  pdf: "application/pdf",
+  doc: "application/msword",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ppt: "application/vnd.ms-powerpoint",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  xls: "application/vnd.ms-excel",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+};
+
 function getExt(filePath: string): string {
   const ext = path.basename(filePath).toLowerCase().split(".").pop() ?? "";
   return ext;
@@ -50,6 +60,10 @@ function getImageMime(filePath: string): string | null {
 
 function getAudioMime(filePath: string): string | null {
   return AUDIO_EXT_TO_MIME[getExt(filePath)] ?? null;
+}
+
+function getDocumentMime(filePath: string): string | null {
+  return DOCUMENT_EXT_TO_MIME[getExt(filePath)] ?? null;
 }
 
 const EXT_TO_LANGUAGE: Record<string, string> = {
@@ -64,6 +78,7 @@ const EXT_TO_LANGUAGE: Record<string, string> = {
   sql: "sql", graphql: "graphql", gql: "graphql",
   dockerfile: "dockerfile", tf: "hcl", hcl: "hcl",
   env: "bash", gitignore: "bash", txt: "text",
+  pdf: "pdf", doc: "word", docx: "word",
 };
 
 function getLanguage(filePath: string): string {
@@ -280,12 +295,56 @@ export async function GET(
       if (audioMime) {
         return streamFile(filePath, stat, audioMime, request.headers.get("range"));
       }
+      const documentMime = getDocumentMime(filePath);
+      if (documentMime) {
+        return streamFile(filePath, stat, documentMime, request.headers.get("range"));
+      }
       if (stat.size > TEXT_PREVIEW_MAX_BYTES) {
         return NextResponse.json({ error: "File too large for preview (>256KB)" }, { status: 413 });
       }
       const content = fs.readFileSync(filePath, "utf-8");
       const language = getLanguage(filePath);
       return NextResponse.json({ content, language, size: stat.size });
+    }
+
+    if (type === "preview") {
+      if (!stat.isFile()) {
+        return NextResponse.json({ error: "Not a file" }, { status: 400 });
+      }
+      const documentMime = getDocumentMime(filePath);
+      if (!documentMime) {
+        return NextResponse.json({ error: "Preview not available" }, { status: 400 });
+      }
+      if (filePath.toLowerCase().endsWith(".docx")) {
+        try {
+          const { convertToHtml } = await import("mammoth");
+          const buffer = fs.readFileSync(filePath);
+          const result = await convertToHtml({ buffer });
+          return new Response(result.value, {
+            headers: {
+              "Content-Type": "text/html; charset=utf-8",
+              "Cache-Control": "no-cache",
+            },
+          });
+        } catch (error) {
+          return NextResponse.json({ error: String(error) }, { status: 500 });
+        }
+      }
+      return NextResponse.json({ error: "Preview not available for this document type" }, { status: 400 });
+    }
+
+    if (type === "meta") {
+      if (!stat.isFile()) {
+        return NextResponse.json({ error: "Not a file" }, { status: 400 });
+      }
+      const documentMime = getDocumentMime(filePath);
+      const imageMime = getImageMime(filePath);
+      const audioMime = getAudioMime(filePath);
+      return NextResponse.json({
+        size: stat.size,
+        language: getLanguage(filePath),
+        mime: imageMime || audioMime || documentMime || "application/octet-stream",
+      });
     }
 
     if (type === "watch") {
@@ -366,6 +425,54 @@ export async function GET(
       });
 
     return NextResponse.json({ entries, path: filePath });
+  } catch (error) {
+    return NextResponse.json({ error: String(error) }, { status: 500 });
+  }
+}
+
+export async function POST(
+  request: NextRequest,
+  { params }: { params: Promise<{ path: string[] }> }
+) {
+  try {
+    const { path: segments } = await params;
+    const filePath = filePathFromSegments(segments);
+    const allowedRoots = await getAllowedRoots();
+    if (!isPathAllowed(filePath, allowedRoots)) {
+      return NextResponse.json({ error: "Access denied" }, { status: 403 });
+    }
+
+    let stat: fs.Stats;
+    try {
+      stat = fs.statSync(filePath);
+    } catch {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+
+    if (!stat.isFile()) {
+      return NextResponse.json({ error: "Not a file" }, { status: 400 });
+    }
+
+    const body = await request.json();
+    if (!body || typeof body.content !== "string") {
+      return NextResponse.json({ error: "Missing file content" }, { status: 400 });
+    }
+
+    const imageMime = getImageMime(filePath);
+    const audioMime = getAudioMime(filePath);
+    const documentMime = getDocumentMime(filePath);
+    if (imageMime || audioMime || documentMime) {
+      return NextResponse.json({ error: "Cannot save binary files" }, { status: 400 });
+    }
+
+    fs.writeFileSync(filePath, body.content, "utf-8");
+    const newStat = fs.statSync(filePath);
+    return NextResponse.json({
+      content: body.content,
+      language: getLanguage(filePath),
+      size: newStat.size,
+      path: filePath,
+    });
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }
