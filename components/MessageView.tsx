@@ -342,6 +342,33 @@ function AssistantMessageView({
     .map((b) => b.text)
     .join("\n");
 
+  // Collect all document paths from text blocks and tool call blocks
+  // Normalize paths before deduping: resolve relative to cwd, unify slashes
+  const allDocPaths = useMemo(() => {
+    const paths: string[] = [];
+    for (const block of blocks) {
+      if (block.type === "text") {
+        paths.push(...extractDocPathsFromText((block as TextContent).text));
+      }
+      if (block.type === "toolCall") {
+        const tc = block as ToolCallContent;
+        const result = toolResults?.get(tc.toolCallId);
+        paths.push(...extractDocPathsFromToolCall(tc, result));
+      }
+    }
+    // Dedupe by normalized absolute path (unified slashes + cwd resolution)
+    const normalizedSet = new Set<string>();
+    const unique: string[] = [];
+    for (const p of paths) {
+      const resolved = resolveFilePath(p, cwd).replace(/\\/g, "/").toLowerCase();
+      if (!normalizedSet.has(resolved)) {
+        normalizedSet.add(resolved);
+        unique.push(p);
+      }
+    }
+    return unique;
+  }, [blocks, toolResults, cwd]);
+
   const copyContent = () => {
     copyText(textContent).then(() => {
       setCopied(true);
@@ -462,6 +489,15 @@ function AssistantMessageView({
           <BlockView key={i} block={block} toolResults={toolResults} isStreaming={isStreaming} streamingDuration={streamingDurations.get(i) ?? (block.type === "thinking" ? thinkingDurationFromFile : undefined)} toolCallDurations={toolCallDurations} onOpenFile={onOpenFile} cwd={cwd} />
         ))}
       </div>
+
+      {/* ── Document cards ── */}
+      {allDocPaths.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 4 }}>
+          {allDocPaths.map((p, i) => (
+            <DocumentCard key={`${p}-${i}`} filePath={p} onOpenFile={onOpenFile} cwd={cwd} />
+          ))}
+        </div>
+      )}
 
       <div style={{
         display: "flex", alignItems: "center", gap: 8, marginTop: 4,
@@ -682,7 +718,14 @@ function extractDocPathsFromToolCall(block: ToolCallContent, result?: ToolResult
     }
   }
 
-  return paths;
+  return [...new Set(paths)];
+}
+
+// Extract document file paths from plain text content
+function extractDocPathsFromText(text: string): string[] {
+  const docPathRegex = /[^\s"'`]+\.(?:pdf|docx?|pptx?|xlsx?)\b/gi;
+  const matches = text.match(docPathRegex);
+  return matches ? [...new Set(matches)] : [];
 }
 
 // ── DocumentCard ──────────────────────────────────────────────────────────
@@ -760,9 +803,6 @@ function ToolCallBlock({ block, result, isRunning, duration, onOpenFile, cwd }: 
   const resultIsEmpty = resultText === null ? false : (resultText.trim() === "(no output)" || resultText.trim() === "");
   const isError = result?.isError ?? false;
 
-  // Document detection — find document file paths from this tool call
-  const docPaths = !isError ? extractDocPathsFromToolCall(block, result) : [];
-
   return (
     <div
       style={{
@@ -804,15 +844,6 @@ function ToolCallBlock({ block, result, isRunning, duration, onOpenFile, cwd }: 
           <polyline points="2 3.5 5 6.5 8 3.5" />
         </svg>
       </button>
-
-      {/* ── Document cards ── */}
-      {docPaths.length > 0 && (
-        <div style={{ padding: "4px 10px 2px" }}>
-          {docPaths.map((p) => (
-            <DocumentCard key={p} filePath={p} onOpenFile={onOpenFile} cwd={cwd} />
-          ))}
-        </div>
-      )}
 
       {/* ── Expanded: input args ── */}
       {expanded && (
