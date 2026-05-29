@@ -566,6 +566,8 @@ export function AppShell() {
               onSystemPromptChange={handleSystemPromptChange}
               onSessionStatsChange={handleSessionStatsChange}
               onContextUsageChange={handleContextUsageChange}
+              onOpenFile={handleOpenFile}
+              cwd={selectedSession?.cwd ?? newSessionCwd ?? undefined}
             />
           ) : showPlaceholder ? (
             activeCwd ? (

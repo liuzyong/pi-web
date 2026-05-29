@@ -125,7 +125,13 @@ async function getAllowedRoots(): Promise<Set<string>> {
   const sessions = await listAllSessions();
   const roots = new Set<string>();
   for (const s of sessions) {
-    if (s.cwd) roots.add(s.cwd);
+    if (s.cwd) {
+      roots.add(s.cwd);
+      // Also allow the parent directory so sibling directories (like outputs/) are accessible
+      // when the cwd is a subdirectory (e.g. cwd = project/src but docs in project/outputs)
+      const parent = path.dirname(s.cwd);
+      if (parent && parent !== s.cwd) roots.add(parent);
+    }
   }
   // Also allow ~/pi-cwd-* directories created by the default-cwd endpoint
   const home = (await import("os")).homedir();
@@ -320,7 +326,48 @@ export async function GET(
           const { convertToHtml } = await import("mammoth");
           const buffer = fs.readFileSync(filePath);
           const result = await convertToHtml({ buffer });
-          return new Response(result.value, {
+          // 包裹完整的文档排版样式，模拟 Word 页面外观
+          const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  @page { margin: 2cm; }
+  body {
+    font-family: "SimSun", "Times New Roman", serif;
+    font-size: 12pt;
+    line-height: 1.8;
+    color: #000;
+    background: #fff;
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 40px 60px;
+  }
+  h1 { font-size: 22pt; font-weight: bold; margin: 0.8em 0 0.4em; line-height: 1.4; text-align: center; }
+  h2 { font-size: 16pt; font-weight: bold; margin: 0.6em 0 0.3em; line-height: 1.4; }
+  h3 { font-size: 14pt; font-weight: bold; margin: 0.5em 0 0.2em; line-height: 1.4; }
+  h4 { font-size: 12pt; font-weight: bold; margin: 0.4em 0 0.2em; line-height: 1.4; }
+  p { margin: 0.5em 0; text-indent: 0; }
+  p[style*="text-align: center"] { text-indent: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+  td, th { border: 1px solid #000; padding: 6px 10px; text-align: left; vertical-align: top; }
+  th { background: #f0f0f0; font-weight: bold; }
+  ul, ol { margin: 0.5em 0; padding-left: 2em; }
+  li { margin: 0.2em 0; }
+  img { max-width: 100%; height: auto; }
+  a { color: #0563C1; text-decoration: underline; }
+  blockquote { margin: 0.5em 0; padding-left: 1em; border-left: 3px solid #ccc; color: #555; }
+  strong { font-weight: bold; }
+  em { font-style: italic; }
+  u { text-decoration: underline; }
+  del, s { text-decoration: line-through; }
+</style>
+</head>
+<body>
+${result.value}
+</body>
+</html>`;
+          return new Response(html, {
             headers: {
               "Content-Type": "text/html; charset=utf-8",
               "Cache-Control": "no-cache",

@@ -7,6 +7,7 @@ import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vs } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import { useTheme } from "@/hooks/useTheme";
+import { DocFileIcon, PdfFileIcon, PptFileIcon, XlsFileIcon } from "./FileIcons";
 import type {
   AgentMessage,
   UserMessage,
@@ -32,6 +33,8 @@ interface Props {
   onEditContent?: (content: string) => void;
   showTimestamp?: boolean;
   prevTimestamp?: number;
+  onOpenFile?: (filePath: string, fileName: string) => void;
+  cwd?: string;
 }
 
 function formatTime(ts?: number): string | null {
@@ -66,12 +69,12 @@ function copyText(text: string): Promise<void> {
   }
 }
 
-export function MessageView({ message, isStreaming, toolResults, modelNames, entryId, onFork, forking, onNavigate, prevAssistantEntryId, onEditContent, showTimestamp, prevTimestamp }: Props) {
+export function MessageView({ message, isStreaming, toolResults, modelNames, entryId, onFork, forking, onNavigate, prevAssistantEntryId, onEditContent, showTimestamp, prevTimestamp, onOpenFile, cwd }: Props) {
   if (message.role === "user") {
     return <UserMessageView message={message as UserMessage} entryId={entryId} onFork={onFork} forking={forking} onNavigate={onNavigate} prevAssistantEntryId={prevAssistantEntryId} onEditContent={onEditContent} />;
   }
   if (message.role === "assistant") {
-    return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} />;
+    return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} onOpenFile={onOpenFile} cwd={cwd} />;
   }
   if (message.role === "toolResult") {
     // Rendered inline under its toolCall — skip standalone rendering if paired
@@ -286,6 +289,8 @@ function AssistantMessageView({
   modelNames,
   showTimestamp,
   prevTimestamp,
+  onOpenFile,
+  cwd,
 }: {
   message: AssistantMessage;
   isStreaming?: boolean;
@@ -293,6 +298,8 @@ function AssistantMessageView({
   modelNames?: Record<string, string>;
   showTimestamp?: boolean;
   prevTimestamp?: number;
+  onOpenFile?: (filePath: string, fileName: string) => void;
+  cwd?: string;
 }) {
   const time = showTimestamp ? formatTime(message.timestamp) : null;
   const blocks = message.content ?? [];
@@ -452,7 +459,7 @@ function AssistantMessageView({
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {blocks.map((block, i) => (
-          <BlockView key={i} block={block} toolResults={toolResults} isStreaming={isStreaming} streamingDuration={streamingDurations.get(i) ?? (block.type === "thinking" ? thinkingDurationFromFile : undefined)} toolCallDurations={toolCallDurations} />
+          <BlockView key={i} block={block} toolResults={toolResults} isStreaming={isStreaming} streamingDuration={streamingDurations.get(i) ?? (block.type === "thinking" ? thinkingDurationFromFile : undefined)} toolCallDurations={toolCallDurations} onOpenFile={onOpenFile} cwd={cwd} />
         ))}
       </div>
 
@@ -505,7 +512,7 @@ function AssistantMessageView({
   );
 }
 
-function BlockView({ block, toolResults, isStreaming, streamingDuration, toolCallDurations }: { block: AssistantContentBlock; toolResults?: Map<string, ToolResultMessage>; isStreaming?: boolean; streamingDuration?: number; toolCallDurations?: Map<string, number> }) {
+function BlockView({ block, toolResults, isStreaming, streamingDuration, toolCallDurations, onOpenFile, cwd }: { block: AssistantContentBlock; toolResults?: Map<string, ToolResultMessage>; isStreaming?: boolean; streamingDuration?: number; toolCallDurations?: Map<string, number>; onOpenFile?: (filePath: string, fileName: string) => void; cwd?: string }) {
   if (block.type === "text") {
     return <TextBlock block={block as TextContent} />;
   }
@@ -516,7 +523,7 @@ function BlockView({ block, toolResults, isStreaming, streamingDuration, toolCal
     const tc = block as ToolCallContent;
     const result = toolResults?.get(tc.toolCallId);
     const duration = toolCallDurations?.get(tc.toolCallId);
-    return <ToolCallBlock block={tc} result={result} isRunning={isStreaming && !result} duration={duration} />;
+    return <ToolCallBlock block={tc} result={result} isRunning={isStreaming && !result} duration={duration} onOpenFile={onOpenFile} cwd={cwd} />;
   }
   return null;
 }
@@ -613,7 +620,136 @@ function ThinkingBlock({ block, duration }: { block: ThinkingContent; duration?:
 }
 
 
-function ToolCallBlock({ block, result, isRunning, duration }: { block: ToolCallContent; result?: ToolResultMessage; isRunning?: boolean; duration?: number }) {
+// ── Document type detection helpers ────────────────────────────────────────
+
+const DOC_EXTENSIONS = new Set(["pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx"]);
+
+const DOC_TYPE_LABELS: Record<string, string> = {
+  pdf: "PDF 文档",
+  doc: "Word 文档",
+  docx: "Word 文档",
+  ppt: "PPT 演示文稿",
+  pptx: "PPT 演示文稿",
+  xls: "Excel 表格",
+  xlsx: "Excel 表格",
+};
+
+function getDocIcon(ext: string, size = 16): React.ReactNode {
+  switch (ext) {
+    case "pdf": return <PdfFileIcon size={size} />;
+    case "doc": case "docx": return <DocFileIcon size={size} />;
+    case "ppt": case "pptx": return <PptFileIcon size={size} />;
+    case "xls": case "xlsx": return <XlsFileIcon size={size} />;
+    default: return null;
+  }
+}
+
+function isDocFilePath(filePath: string): boolean {
+  const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
+  return DOC_EXTENSIONS.has(ext);
+}
+
+function extractDocPathsFromToolCall(block: ToolCallContent, result?: ToolResultMessage): string[] {
+  const paths: string[] = [];
+  const input = block.input;
+
+  // Check common file path fields in tool input
+  if ("file_path" in input && typeof input.file_path === "string" && isDocFilePath(input.file_path)) {
+    paths.push(input.file_path);
+  }
+  if ("path" in input && typeof input.path === "string" && isDocFilePath(input.path)) {
+    paths.push(input.path);
+  }
+  if ("command" in input && typeof input.command === "string") {
+    // Extract file paths from command strings like "Created file: xxx.docx"
+    const docPathRegex = /[^\s"'"]+\.(?:pdf|docx?|pptx?|xlsx?)\b/gi;
+    const matches = input.command.match(docPathRegex);
+    if (matches) paths.push(...matches);
+  }
+
+  // Also check result text for file paths
+  if (result) {
+    const resultText = result.content
+      .filter((b): b is { type: "text"; text: string } => b.type === "text")
+      .map((b) => b.text)
+      .join("\n");
+    const docPathRegex = /[^\s"'"]+\.(?:pdf|docx?|pptx?|xlsx?)\b/gi;
+    const matches = resultText.match(docPathRegex);
+    if (matches) {
+      for (const m of matches) {
+        if (!paths.includes(m)) paths.push(m);
+      }
+    }
+  }
+
+  return paths;
+}
+
+// ── DocumentCard ──────────────────────────────────────────────────────────
+
+function resolveFilePath(filePath: string, cwd?: string): string {
+  // Already an absolute path (Windows: C:\... or POSIX: /...)
+  if (/^[a-zA-Z]:[\\/]/.test(filePath) || filePath.startsWith("/")) return filePath;
+  // Relative path — resolve against cwd
+  if (cwd) {
+    const normalizedCwd = cwd.replace(/\\/g, "/").replace(/\/+$/, "");
+    const normalizedFile = filePath.replace(/\\/g, "/");
+    return normalizedCwd + "/" + normalizedFile;
+  }
+  return filePath;
+}
+
+function DocumentCard({ filePath, onOpenFile, cwd }: { filePath: string; onOpenFile?: (filePath: string, fileName: string) => void; cwd?: string }) {
+  const [hovered, setHovered] = useState(false);
+  const resolvedPath = resolveFilePath(filePath, cwd);
+  const fileName = resolvedPath.split(/[\\/]/).pop() ?? resolvedPath;
+  const ext = fileName.split(".").pop()?.toLowerCase() ?? "";
+  const typeLabel = DOC_TYPE_LABELS[ext] ?? "文档";
+  const icon = getDocIcon(ext, 16);
+
+  const handleClick = () => {
+    onOpenFile?.(resolvedPath, fileName);
+  };
+
+  return (
+    <div
+      onClick={handleClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        padding: "8px 12px",
+        borderRadius: 8,
+        border: `1px solid ${hovered ? "var(--accent)" : "var(--border)"}`,
+        background: hovered ? "var(--bg-selected)" : "var(--bg-subtle)",
+        cursor: onOpenFile ? "pointer" : "default",
+        transition: "border-color 0.15s, background 0.15s",
+        marginTop: 4,
+      }}
+    >
+      {icon && <span style={{ flexShrink: 0, display: "flex", alignItems: "center" }}>{icon}</span>}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 14, fontWeight: 500, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {fileName}
+        </div>
+        <div style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 1 }}>
+          {typeLabel} · 已生成
+        </div>
+      </div>
+      {onOpenFile && (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={hovered ? "var(--accent)" : "var(--text-dim)"} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+          <polyline points="9 18 15 12 9 6" />
+        </svg>
+      )}
+    </div>
+  );
+}
+
+// ── ToolCallBlock ──────────────────────────────────────────────────────────
+
+function ToolCallBlock({ block, result, isRunning, duration, onOpenFile, cwd }: { block: ToolCallContent; result?: ToolResultMessage; isRunning?: boolean; duration?: number; onOpenFile?: (filePath: string, fileName: string) => void; cwd?: string }) {
   const [expanded, setExpanded] = useState(false);
   const inputStr = JSON.stringify(block.input, null, 2);
 
@@ -623,6 +759,9 @@ function ToolCallBlock({ block, result, isRunning, duration }: { block: ToolCall
     : null;
   const resultIsEmpty = resultText === null ? false : (resultText.trim() === "(no output)" || resultText.trim() === "");
   const isError = result?.isError ?? false;
+
+  // Document detection — find document file paths from this tool call
+  const docPaths = !isError ? extractDocPathsFromToolCall(block, result) : [];
 
   return (
     <div
@@ -665,6 +804,15 @@ function ToolCallBlock({ block, result, isRunning, duration }: { block: ToolCall
           <polyline points="2 3.5 5 6.5 8 3.5" />
         </svg>
       </button>
+
+      {/* ── Document cards ── */}
+      {docPaths.length > 0 && (
+        <div style={{ padding: "4px 10px 2px" }}>
+          {docPaths.map((p) => (
+            <DocumentCard key={p} filePath={p} onOpenFile={onOpenFile} cwd={cwd} />
+          ))}
+        </div>
+      )}
 
       {/* ── Expanded: input args ── */}
       {expanded && (

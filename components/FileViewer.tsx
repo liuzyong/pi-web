@@ -1304,7 +1304,7 @@ function TextFileViewer({ filePath, cwd }: Props) {
                 <iframe
                   srcDoc={docPreviewHtml}
                   sandbox="allow-same-origin"
-                  style={{ width: "100%", height: "100%", border: "none", background: "var(--bg)" }}
+                  style={{ width: "100%", height: "100%", border: "none", background: "#525659" }}
                   title={`Preview ${getFileName(filePath)}`}
                 />
               ) : (
