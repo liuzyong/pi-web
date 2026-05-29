@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vs } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/cjs/styles/prism";
@@ -553,14 +553,39 @@ function TextFileViewer({ filePath, cwd }: Props) {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
   const [docPreviewHtml, setDocPreviewHtml] = useState<string | null>(null);
+  const [docEditHtml, setDocEditHtml] = useState<string | null>(null);
   const [docPreviewError, setDocPreviewError] = useState<string | null>(null);
   const [docPreviewLoading, setDocPreviewLoading] = useState(false);
+  const docEditRef = useRef<HTMLDivElement | null>(null);
+  const docEditHtmlRef = useRef<string | null>(null);
+  const [docEditDirty, setDocEditDirty] = useState(false);
+    const savedSelectionRef = useRef<Range | null>(null);
+
+  // 保存当前光标选区（供下拉框等会失焦的操作恢复）
+  const saveDocSelection = useCallback(() => {
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0) {
+      savedSelectionRef.current = sel.getRangeAt(0).cloneRange();
+    }
+  }, []);
+
+  // 恢复之前保存的光标选区
+  const restoreDocSelection = useCallback(() => {
+    const range = savedSelectionRef.current;
+    if (!range) return;
+    const sel = window.getSelection();
+    if (sel) {
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+  }, []);
+
   const [watching, setWatching] = useState(false);
   const [changeCount, setChangeCount] = useState(0);
   const esRef = useRef<EventSource | null>(null);
   const isDocument = isDocumentPath(filePath);
   const isPdf = filePath.toLowerCase().endsWith(".pdf");
-  const isWord = filePath.toLowerCase().endsWith(".doc") || filePath.toLowerCase().endsWith(".docx");
+  const isWord = filePath.toLowerCase().endsWith(".docx");
 
   const fetchContent = useCallback((filePath: string, isRefresh = false) => {
     const encoded = encodeFilePathForApi(filePath);
@@ -625,6 +650,10 @@ function TextFileViewer({ filePath, cwd }: Props) {
       })
       .then((html) => {
         setDocPreviewHtml(html);
+        setDocEditHtml((prev) => prev ?? html);
+        if (docEditHtmlRef.current === null) {
+          docEditHtmlRef.current = html;
+        }
       })
       .catch((e) => {
         setDocPreviewError(String(e));
@@ -694,7 +723,7 @@ function TextFileViewer({ filePath, cwd }: Props) {
       es.close();
       esRef.current = null;
     };
-  }, [filePath, fetchContent, fetchMeta]);
+  }, [filePath, fetchContent, fetchMeta, fetchDocPreview]);
 
   if (loading) {
     return (
@@ -834,12 +863,13 @@ function TextFileViewer({ filePath, cwd }: Props) {
         )}
 
         {/* Save / edit controls */}
-        {!isDocument ? (
+        {(!isDocument || isWord) ? (
           editMode ? (
             <>
               <button
                 onClick={async () => {
-                  if (!draft) return;
+                  const content = isWord ? (docEditHtmlRef.current ?? docEditHtml) : draft;
+                  if (!content) return;
                   setSaving(true);
                   setSaveError(null);
                   setSaveSuccess(null);
@@ -848,14 +878,22 @@ function TextFileViewer({ filePath, cwd }: Props) {
                     const res = await fetch(`/api/files/${encoded}`, {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ content: draft }),
+                      body: JSON.stringify({ content }),
                     });
                     const result = await res.json();
                     if (!res.ok) {
                       throw new Error(result?.error || res.statusText);
                     }
-                    setData((prev) => prev ? { ...prev, content: draft, size: result.size ?? prev.size } : { content: draft, language: data.language, size: result.size ?? data.size });
-                    setPrevContent(data.content);
+                    setData((prev) => prev ? { ...prev, size: result.size ?? prev.size } : { content: "", language: data.language, size: result.size ?? data.size });
+                    if (isWord) {
+                      setDocPreviewHtml(content);
+                      setDocEditHtml(content);
+                      docEditHtmlRef.current = content;
+                                            docEditHtmlRef.current = content;
+                      setDocEditDirty(false);
+                    } else {
+                      setPrevContent(data.content);
+                    }
                     setEditMode(false);
                     setSaveSuccess("Saved");
                     window.setTimeout(() => setSaveSuccess(null), 3000);
@@ -865,14 +903,16 @@ function TextFileViewer({ filePath, cwd }: Props) {
                     setSaving(false);
                   }
                 }}
-                disabled={saving || draft === null || draft === data.content}
+                disabled={saving || (isWord ? !docEditDirty : draft === null || draft === data.content)}
                 title="Save file"
                 style={{
-                  padding: "2px 8px", fontSize: 11, cursor: saving ? "not-allowed" : "pointer",
-                  background: saving ? "var(--bg)" : "var(--bg-selected)",
-                  color: saving ? "var(--text-muted)" : "var(--text)",
+                  padding: "2px 8px", fontSize: 11,
+                  cursor: (saving || (isWord ? !docEditDirty : draft === null || draft === data.content)) ? "not-allowed" : "pointer",
+                  background: (saving || (isWord ? !docEditDirty : draft === null || draft === data.content)) ? "var(--bg)" : "var(--bg-selected)",
+                  color: (saving || (isWord ? !docEditDirty : draft === null || draft === data.content)) ? "var(--text-muted)" : "var(--text)",
                   border: "1px solid var(--border)", borderRadius: 5,
                   fontWeight: 600,
+                  opacity: (saving || (isWord ? !docEditDirty : draft === null || draft === data.content)) ? 0.5 : 1,
                 }}
               >
                 {saving ? "Saving..." : "Save"}
@@ -880,8 +920,14 @@ function TextFileViewer({ filePath, cwd }: Props) {
               <button
                 onClick={() => {
                   setEditMode(false);
-                  setDraft(data.content);
                   setSaveError(null);
+                  if (isWord) {
+                    setDocEditHtml(docPreviewHtml);
+                    docEditHtmlRef.current = docPreviewHtml;
+                                        setDocEditDirty(false);
+                  } else {
+                    setDraft(data.content);
+                  }
                 }}
                 title="Cancel editing"
                 style={{
@@ -899,9 +945,15 @@ function TextFileViewer({ filePath, cwd }: Props) {
             <button
               onClick={() => {
                 setEditMode(true);
-                setDraft(data.content);
                 setSaveError(null);
                 setSaveSuccess(null);
+                if (isWord) {
+                  setDocEditHtml(docPreviewHtml);
+                  docEditHtmlRef.current = docPreviewHtml;
+                  setDocEditDirty(false);
+                } else {
+                  setDraft(data.content);
+                }
               }}
               title="Edit file content"
               style={{
@@ -993,7 +1045,258 @@ function TextFileViewer({ filePath, cwd }: Props) {
               <div style={{ padding: 16, borderBottom: "1px solid var(--border)", background: "var(--bg)", color: "var(--text-dim)" }}>
                 Word preview
               </div>
-              {docPreviewLoading ? (
+              {editMode ? (
+                docEditHtml ? (
+                  <>
+                    {/* Rich text toolbar */}
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 1,
+                        padding: "6px 10px",
+                        borderBottom: "1px solid var(--border)",
+                        background: "var(--bg)",
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      {[
+                        { cmd: "bold", icon: "B", title: "加粗", style: { fontWeight: 700 } },
+                        { cmd: "italic", icon: "I", title: "斜体", style: { fontStyle: "italic" } },
+                        { cmd: "underline", icon: "U", title: "下划线", style: { textDecoration: "underline" } },
+                        { cmd: "strikeThrough", icon: "S", title: "删除线", style: { textDecoration: "line-through" } },
+                        { sep: true },
+                        { cmd: "insertUnorderedList", icon: "☰", title: "无序列表" },
+                        { cmd: "insertOrderedList", icon: "№", title: "有序列表" },
+                        { sep: true },
+                        { cmd: "justifyLeft", icon: "≡←", title: "左对齐" },
+                        { cmd: "justifyCenter", icon: "≡↔", title: "居中" },
+                        { cmd: "justifyRight", icon: "≡→", title: "右对齐" },
+                        { sep: true },
+                        { cmd: "indent", icon: "→≡", title: "增加缩进" },
+                        { cmd: "outdent", icon: "≡←", title: "减少缩进" },
+                        { sep: true },
+                      ].map((item, i) =>
+                        item.sep ? (
+                          <div key={`s${i}`} style={{ width: 1, height: 22, background: "var(--border)", margin: "0 4px" }} />
+                        ) : (
+                          <button
+                            key={item.cmd}
+                            title={item.title}
+                            onMouseDown={(e) => {
+                              e.preventDefault(); // 阻止失焦，保持光标位置
+                              document.execCommand(item.cmd!, false);
+                              if (docEditRef.current) {
+                                docEditHtmlRef.current = docEditRef.current.innerHTML;
+                                setDocEditDirty(true);
+                              }
+                            }}
+                            style={{
+                              padding: "3px 8px",
+                              fontSize: 13,
+                              cursor: "pointer",
+                              border: "1px solid var(--border)",
+                              borderRadius: 4,
+                              background: "var(--bg-hover)",
+                              color: "var(--text)",
+                              minWidth: 28,
+                              textAlign: "center",
+                              lineHeight: 1.4,
+                              fontFamily: "var(--font-sans)",
+                              transition: "background 0.15s",
+                              ...item.style,
+                            }}
+                          >
+                            {item.icon}
+                          </button>
+                        )
+                      )}
+                      {/* Heading selector */}
+                      <select
+                        title="标题级别"
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (!val) return;
+                          // 恢复之前保存的光标位置
+                          restoreDocSelection();
+                          if (val === "p") {
+                            document.execCommand("formatBlock", false, "p");
+                          } else {
+                            document.execCommand("formatBlock", false, val);
+                          }
+                          if (docEditRef.current) {
+                            docEditHtmlRef.current = docEditRef.current.innerHTML;
+                            setDocEditDirty(true);
+                          }
+                          e.target.value = ""; // 重置以便重复选择
+                        }}
+                        style={{
+                          padding: "3px 6px",
+                          fontSize: 12,
+                          border: "1px solid var(--border)",
+                          borderRadius: 4,
+                          background: "var(--bg-hover)",
+                          color: "var(--text)",
+                          cursor: "pointer",
+                          fontFamily: "var(--font-sans)",
+                          minWidth: 48,
+                        }}
+                        defaultValue=""
+                      >
+                        <option value="" disabled>标题</option>
+                        <option value="h1">标题1</option>
+                        <option value="h2">标题2</option>
+                        <option value="h3">标题3</option>
+                        <option value="h4">标题4</option>
+                        <option value="p">正文</option>
+                      </select>
+                      {/* Font size selector */}
+                      <select
+                        title="字号"
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (!val) return;
+                          restoreDocSelection();
+                          document.execCommand("fontSize", false, val);
+                          if (docEditRef.current) {
+                            docEditHtmlRef.current = docEditRef.current.innerHTML;
+                            setDocEditDirty(true);
+                          }
+                          e.target.value = ""; // 重置以便重复选择
+                        }}
+                        style={{
+                          padding: "3px 6px",
+                          fontSize: 12,
+                          border: "1px solid var(--border)",
+                          borderRadius: 4,
+                          background: "var(--bg-hover)",
+                          color: "var(--text)",
+                          cursor: "pointer",
+                          fontFamily: "var(--font-sans)",
+                          minWidth: 48,
+                        }}
+                        defaultValue=""
+                      >
+                        <option value="" disabled>字号</option>
+                        <option value="1">10px</option>
+                        <option value="2">13px</option>
+                        <option value="3">16px</option>
+                        <option value="4">18px</option>
+                        <option value="5">24px</option>
+                        <option value="6">32px</option>
+                        <option value="7">48px</option>
+                      </select>
+                      {/* Text color */}
+                      <label title="文字颜色" style={{ position: "relative", cursor: "pointer", display: "inline-flex", alignItems: "center" }}>
+                        <span style={{
+                          padding: "3px 8px",
+                          fontSize: 13,
+                          border: "1px solid var(--border)",
+                          borderRadius: 4,
+                          background: "var(--bg-hover)",
+                          color: "var(--text)",
+                          fontFamily: "var(--font-sans)",
+                          lineHeight: 1.4,
+                        }}>A<span
+                          id="docColorBar"
+                          style={{
+                            display: "block",
+                            height: 3,
+                            borderRadius: 1,
+                            margin: "-1px 2px 0",
+                            background: "#ff0000",
+                          }}
+                        /></span>
+                        <input
+                          type="color"
+                          id="docColorPicker"
+                          style={{
+                            position: "absolute",
+                            width: 0,
+                            height: 0,
+                            opacity: 0,
+                            pointerEvents: "none",
+                          }}
+                          onChange={(e) => {
+                            restoreDocSelection();
+                            document.execCommand("foreColor", false, e.target.value);
+                            // 更新颜色指示条
+                            const bar = document.getElementById("docColorBar");
+                            if (bar) bar.style.background = e.target.value;
+                            if (docEditRef.current) {
+                              docEditHtmlRef.current = docEditRef.current.innerHTML;
+                              setDocEditDirty(true);
+                            }
+                          }}
+                        />
+                      </label>
+                      {/* Clear formatting */}
+                      <button
+                        title="清除格式"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          document.execCommand("removeFormat", false);
+                          if (docEditRef.current) {
+                            docEditHtmlRef.current = docEditRef.current.innerHTML;
+                            setDocEditDirty(true);
+                          }
+                        }}
+                        style={{
+                          padding: "3px 8px",
+                          fontSize: 13,
+                          cursor: "pointer",
+                          border: "1px solid var(--border)",
+                          borderRadius: 4,
+                          background: "var(--bg-hover)",
+                          color: "var(--text)",
+                          fontFamily: "var(--font-sans)",
+                          lineHeight: 1.4,
+                        }}
+                      >
+                        清除
+                      </button>
+                    </div>
+                    {/* Editable area */}
+                    <div
+                      ref={(el) => { docEditRef.current = el; }}
+                      contentEditable
+                      suppressContentEditableWarning
+                      dangerouslySetInnerHTML={{ __html: docEditHtml ?? "" }}
+                      onInput={(e) => {
+                        docEditHtmlRef.current = (e.target as HTMLDivElement).innerHTML;
+                        setDocEditDirty(true);
+                      }}
+                      onKeyUp={saveDocSelection}
+                      onMouseUp={saveDocSelection}
+                      style={{
+                        flex: 1,
+                        width: "100%",
+                        overflow: "auto",
+                        padding: 16,
+                        background: "var(--bg-panel)",
+                        color: "var(--text)",
+                        fontFamily: "var(--font-sans)",
+                        fontSize: 14,
+                        lineHeight: 1.6,
+                        outline: "none",
+                      }}
+                    />
+                  </>
+                ) : docPreviewLoading ? (
+                  <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)" }}>
+                    Loading Word preview...
+                  </div>
+                ) : (
+                  <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, background: "var(--bg)" }}>
+                    <div style={{ maxWidth: 520, textAlign: "center", color: "var(--text-dim)" }}>
+                      <p style={{ marginBottom: 8, fontSize: 14, color: "var(--text)" }}>
+                        Word 文档编辑时需要加载预览内容。
+                      </p>
+                      {docPreviewError && <p style={{ marginBottom: 16, color: "#f87171" }}>{docPreviewError}</p>}
+                    </div>
+                  </div>
+                )
+              ) : docPreviewLoading ? (
                 <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)" }}>
                   Loading Word preview...
                 </div>

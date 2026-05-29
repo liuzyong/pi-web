@@ -461,11 +461,26 @@ export async function POST(
     const imageMime = getImageMime(filePath);
     const audioMime = getAudioMime(filePath);
     const documentMime = getDocumentMime(filePath);
-    if (imageMime || audioMime || documentMime) {
+    const ext = getExt(filePath);
+
+    if (imageMime || audioMime) {
       return NextResponse.json({ error: "Cannot save binary files" }, { status: 400 });
     }
 
-    fs.writeFileSync(filePath, body.content, "utf-8");
+    if (ext === "docx") {
+      try {
+        const { default: htmlToDocx } = await import("html-to-docx");
+        const docxBuffer = await htmlToDocx(body.content);
+        fs.writeFileSync(filePath, Buffer.from(docxBuffer));
+      } catch (error) {
+        return NextResponse.json({ error: String(error) }, { status: 500 });
+      }
+    } else if (documentMime) {
+      return NextResponse.json({ error: "Cannot save this document type" }, { status: 400 });
+    } else {
+      fs.writeFileSync(filePath, body.content, "utf-8");
+    }
+
     const newStat = fs.statSync(filePath);
     return NextResponse.json({
       content: body.content,
