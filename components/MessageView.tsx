@@ -356,17 +356,20 @@ function AssistantMessageView({
         paths.push(...extractDocPathsFromToolCall(tc, result));
       }
     }
-    // Dedupe by normalized absolute path (unified slashes + cwd resolution)
-    const normalizedSet = new Set<string>();
-    const unique: string[] = [];
+    // Dedupe by filename (basename) — same file may appear as absolute path
+    // and as relative/filename-only reference, e.g. "outputs/foo.docx" vs "foo.docx"
+    // Prefer the longest (most specific) path for each unique filename
+    const byBasename = new Map<string, string>(); // basename.lowercase -> best path
     for (const p of paths) {
-      const resolved = resolveFilePath(p, cwd).replace(/\\/g, "/").toLowerCase();
-      if (!normalizedSet.has(resolved)) {
-        normalizedSet.add(resolved);
-        unique.push(p);
+      const resolved = resolveFilePath(p, cwd).replace(/\\/g, "/");
+      const basename = resolved.split("/").pop()?.toLowerCase() ?? resolved.toLowerCase();
+      const existing = byBasename.get(basename);
+      // Keep the longer (more specific/absolute) path
+      if (!existing || resolved.length > existing.length) {
+        byBasename.set(basename, resolved);
       }
     }
-    return unique;
+    return [...byBasename.values()];
   }, [blocks, toolResults, cwd]);
 
   const copyContent = () => {
@@ -491,7 +494,10 @@ function AssistantMessageView({
       </div>
 
       {/* ── Document cards ── */}
-      {allDocPaths.length > 0 && (
+      {/* Only show document cards in messages that contain text content.
+          Pure tool-call messages skip doc cards because the subsequent
+          text-response message will include the same paths, avoiding duplicates. */}
+      {allDocPaths.length > 0 && textContent.trim().length > 0 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 4 }}>
           {allDocPaths.map((p, i) => (
             <DocumentCard key={`${p}-${i}`} filePath={p} onOpenFile={onOpenFile} cwd={cwd} />
