@@ -528,7 +528,7 @@ function AudioViewer({ filePath, cwd }: { filePath: string; cwd?: string }) {
   );
 }
 
-export function FileViewer({ filePath, cwd }: Props) {
+export function FileViewer({ filePath, cwd, onEditModeChange }: Props) {
   if (isImagePath(filePath)) {
     return <ImageViewer filePath={filePath} cwd={cwd} />;
   }
@@ -560,6 +560,24 @@ function TextFileViewer({ filePath, cwd }: Props) {
   const docEditHtmlRef = useRef<string | null>(null);
   const [docEditDirty, setDocEditDirty] = useState(false);
     const savedSelectionRef = useRef<Range | null>(null);
+
+  // 从 Word 文档 HTML 中提取纯内容（去掉 <style>、<meta> 等标签），
+  // 防止 <style> 中的 body 规则泄漏到主页面影响全局布局
+  const docEditContent = useMemo(() => {
+    if (!docEditHtml) return "";
+    // 去掉 <style> 标签及其内容（防止 body 规则泄漏）
+    let content = docEditHtml.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "");
+    // 去掉 <meta> 标签
+    content = content.replace(/<meta[^>]*>/gi, "");
+    // 去掉 <!DOCTYPE> 和 <html>/<head>/<body> 包装标签（保留内容）
+    content = content.replace(/<!DOCTYPE[^>]*>/gi, "");
+    content = content.replace(/<\/?html[^>]*>/gi, "");
+    content = content.replace(/<\/?head[^>]*>/gi, "");
+    content = content.replace(/<\/?body[^>]*>/gi, "");
+    // 清理多余空白
+    content = content.trim();
+    return content;
+  }, [docEditHtml]);
 
   // 保存当前光标选区（供下拉框等会失焦的操作恢复）
   const saveDocSelection = useCallback(() => {
@@ -1261,7 +1279,7 @@ function TextFileViewer({ filePath, cwd }: Props) {
                       ref={(el) => { docEditRef.current = el; }}
                       contentEditable
                       suppressContentEditableWarning
-                      dangerouslySetInnerHTML={{ __html: docEditHtml ?? "" }}
+                      dangerouslySetInnerHTML={{ __html: docEditContent }}
                       onInput={(e) => {
                         docEditHtmlRef.current = (e.target as HTMLDivElement).innerHTML;
                         setDocEditDirty(true);
@@ -1272,12 +1290,12 @@ function TextFileViewer({ filePath, cwd }: Props) {
                         flex: 1,
                         width: "100%",
                         overflow: "auto",
-                        padding: 16,
+                        padding: "8px 12px",
                         background: "var(--bg-panel)",
                         color: "var(--text)",
-                        fontFamily: "var(--font-sans)",
+                        fontFamily: '"SimSun", "Times New Roman", serif',
                         fontSize: 14,
-                        lineHeight: 1.6,
+                        lineHeight: 1.8,
                         outline: "none",
                       }}
                     />
@@ -1389,7 +1407,7 @@ function TextFileViewer({ filePath, cwd }: Props) {
               fontFamily: "var(--font-mono)",
               fontSize: 13,
               lineHeight: 1.6,
-              padding: 16,
+              padding: "8px 12px",
               outline: "none",
               whiteSpace: "pre",
             }}
