@@ -254,8 +254,10 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
       )}
 
       {isEmptyNew ? (
-        <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto px-4 py-8">
-          <div className="w-full max-w-[820px]">
+        <div className="bg-grid flex flex-1 flex-col items-center justify-center overflow-y-auto px-4 py-8" style={{ position: "relative" }}>
+          {/* Subtle accent glow in background */}
+          <div style={{ position: "absolute", top: "30%", left: "50%", transform: "translate(-50%, -50%)", width: 400, height: 400, borderRadius: "50%", background: "var(--accent-glow)", filter: "blur(80px)", pointerEvents: "none", opacity: 0.5 }} />
+          <div className="w-full max-w-[820px]" style={{ position: "relative", zIndex: 1 }}>
             <div
               className="mb-3"
               style={{
@@ -269,18 +271,18 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
               }}
             >
               <div style={{ display: "flex", alignItems: "baseline", gap: 10, minWidth: 0, flex: 1, lineHeight: 1.4 }}>
-                <span style={{ fontSize: 28, fontWeight: 700, letterSpacing: "-0.02em", color: "var(--text)" }}>π</span>
+                <span className="brand-gradient-text" style={{ fontSize: 32, fontWeight: 800, letterSpacing: "-0.02em" }}>π</span>
                 <span style={{ fontSize: 22, color: "var(--text)", fontWeight: 700, letterSpacing: "-0.01em" }}>Pi Agent Web</span>
                 <span style={{ fontSize: 14, minWidth: 0, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
                   <Typewriter phrases={TYPEWRITER_PHRASES} />
                 </span>
               </div>
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2, flexShrink: 0 }}>
-                <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
-                  web <span style={{ color: "var(--text)" }}>v{process.env.NEXT_PUBLIC_APP_VERSION ?? "0.0.0"}</span>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2, flexShrink: 0, padding: "4px 8px", borderRadius: 6, background: "var(--bg-subtle)" }}>
+                <span style={{ fontSize: 11, color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
+                  web <span style={{ color: "var(--text-muted)" }}>v{process.env.NEXT_PUBLIC_APP_VERSION ?? "0.0.0"}</span>
                 </span>
-                <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
-                  pi <span style={{ color: "var(--text)" }}>v{process.env.NEXT_PUBLIC_PI_VERSION ?? "0.0.0"}</span>
+                <span style={{ fontSize: 11, color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
+                  pi <span style={{ color: "var(--text-muted)" }}>v{process.env.NEXT_PUBLIC_PI_VERSION ?? "0.0.0"}</span>
                 </span>
               </div>
             </div>

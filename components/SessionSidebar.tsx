@@ -183,10 +183,11 @@ function PiAgentTitle() {
   return (
     <button
       onClick={handleClick}
+      className={showVersion ? "" : "brand-gradient-text"}
       style={{
         background: "none", border: "none", padding: 0, cursor: "default",
         fontWeight: 700, fontSize: 15, letterSpacing: "-0.01em",
-        color: showVersion ? "var(--accent)" : "var(--text)",
+        color: showVersion ? "var(--accent)" : undefined,
         fontFamily: "var(--font-mono)",
         minWidth: "6ch",
       }}
@@ -339,7 +340,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       <div
         style={{
           padding: "12px 10px 10px",
-          borderBottom: "1px solid var(--border)",
+          borderBottom: "1px solid var(--border-subtle)",
           flexShrink: 0,
         }}
       >
@@ -351,9 +352,9 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
               disabled={!selectedCwd}
               style={{
                 display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
-                background: "var(--bg-hover)",
-                border: "1px solid var(--border)",
-                color: selectedCwd ? "var(--text-muted)" : "var(--text-dim)",
+                background: "var(--accent-soft)",
+                border: "1px solid var(--border-subtle)",
+                color: selectedCwd ? "var(--accent)" : "var(--text-dim)",
                 cursor: selectedCwd ? "pointer" : "not-allowed",
                 height: 32,
                 paddingLeft: 10,
@@ -436,7 +437,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
               alignItems: "center",
               padding: "6px 10px",
               background: selectedCwd ? "var(--bg-hover)" : "rgba(37,99,235,0.06)",
-              border: selectedCwd ? "1px solid var(--border)" : "1px solid rgba(37,99,235,0.4)",
+              border: selectedCwd ? "1px solid var(--border-subtle)" : "1px solid rgba(99,102,241,0.4)",
               borderRadius: 7,
               cursor: "pointer",
               fontSize: 12,
@@ -470,9 +471,9 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                 right: 0,
                 zIndex: 100,
                 background: "var(--bg)",
-                border: "1px solid var(--border)",
+                border: "1px solid var(--glass-border)",
                 borderRadius: 8,
-                boxShadow: "0 6px 20px rgba(0,0,0,0.10)",
+                boxShadow: "var(--shadow-md)",
                 overflow: "hidden",
               }}
             >

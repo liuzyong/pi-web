@@ -314,10 +314,8 @@ export function AppShell() {
 
       {/* Left sidebar */}
       <div
-        className={`sidebar-container${sidebarOpen ? " sidebar-open" : " sidebar-closed"}`}
+        className={`sidebar-container glass-panel${sidebarOpen ? " sidebar-open" : " sidebar-closed"}`}
         style={{
-          background: "var(--bg-panel)",
-          borderRight: "1px solid var(--border)",
           display: "flex",
           flexDirection: "column",
           flexShrink: 0,
@@ -330,14 +328,14 @@ export function AppShell() {
       {/* Center: chat */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
         {/* Top bar with sidebar toggle */}
-        <div ref={topBarRef} style={{ display: "flex", alignItems: "center", flexShrink: 0, borderBottom: "1px solid var(--border)", height: 36, background: "var(--bg-panel)" }}>
+        <div ref={topBarRef} className="glass-panel" style={{ display: "flex", alignItems: "center", flexShrink: 0, borderBottom: "1px solid var(--border-subtle)", height: 36 }}>
           <button
             onClick={() => setSidebarOpen((v) => !v)}
             title={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
             style={{
               display: "flex", alignItems: "center", justifyContent: "center",
               width: 36, height: 36, padding: 0,
-              background: "none", border: "none", borderRight: "1px solid var(--border)",
+              background: "none", border: "none", borderRight: "1px solid var(--border-subtle)",
               color: "var(--text-muted)", cursor: "pointer", flexShrink: 0, transition: "color 0.12s",
             }}
             onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
@@ -364,7 +362,7 @@ export function AppShell() {
             style={{
               display: "flex", alignItems: "center", justifyContent: "center",
               width: 36, height: 36, padding: 0,
-              background: "none", border: "none", borderRight: "1px solid var(--border)",
+              background: "none", border: "none", borderRight: "1px solid var(--border-subtle)",
               color: "var(--text-muted)", cursor: "pointer", flexShrink: 0, transition: "color 0.12s",
             }}
             onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
@@ -405,7 +403,7 @@ export function AppShell() {
                   background: activeTopPanel === "system" ? "var(--bg-selected)" : "none",
                   border: "none",
                   borderTop: activeTopPanel === "system" ? "2px solid var(--accent)" : "2px solid transparent",
-                  borderRight: "1px solid var(--border)",
+                  borderRight: "1px solid var(--border-subtle)",
                   cursor: "pointer",
                   color: activeTopPanel === "system" ? "var(--text)" : "var(--text-muted)",
                   fontSize: 11, whiteSpace: "nowrap", transition: "color 0.1s, background 0.1s",
@@ -519,7 +517,7 @@ export function AppShell() {
               {activeTopPanel === "system" && (
                 <div style={{
                   background: "var(--bg-panel)",
-                  borderBottom: "1px solid var(--border)",
+                  borderBottom: "1px solid var(--border-subtle)",
                 }}>
                   {systemPrompt ? (
                     <div style={{
@@ -576,11 +574,11 @@ export function AppShell() {
               </div>
             ) : (
               <div style={{ position: "absolute", top: 12, left: 12, display: "flex", alignItems: "flex-start", gap: 8, userSelect: "none", pointerEvents: "none" }}>
-                <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.7, flexShrink: 0 }}>
+                <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.7, flexShrink: 0, filter: "drop-shadow(0 0 6px var(--accent-glow))" }}>
                   <line x1="20" y1="12" x2="4" y2="12" /><polyline points="10 6 4 12 10 18" />
                 </svg>
                 <div>
-                  <div style={{ fontSize: 18, fontWeight: 600, color: "var(--text)", marginBottom: 8 }}>Get Started</div>
+                  <div className="brand-gradient-text" style={{ fontSize: 18, fontWeight: 600, marginBottom: 8 }}>Get Started</div>
                   <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.8 }}>
                     <span style={{ color: "var(--text-dim)", marginRight: 6 }}>1.</span>Select a project directory from the sidebar<br />
                     <span style={{ color: "var(--text-dim)", marginRight: 6 }}>2.</span>Add models via the <strong style={{ color: "var(--text)" }}>Models</strong> button at the bottom
@@ -594,16 +592,14 @@ export function AppShell() {
 
       {/* Right panel: file viewer — always mounted, width animated via CSS */}
       <div
-        className={`right-panel-container${rightPanelOpen ? " right-panel-open" : " right-panel-closed"}`}
+        className={`right-panel-container glass-panel${rightPanelOpen ? " right-panel-open" : " right-panel-closed"}`}
         style={{
           display: "flex",
           flexDirection: "column",
-          borderLeft: "1px solid var(--border)",
-          background: "var(--bg)",
         }}
       >
         {/* Right panel tab bar */}
-        <div style={{ display: "flex", alignItems: "center", flexShrink: 0, background: "var(--bg-panel)", borderBottom: "1px solid var(--border)", height: 36 }}>
+        <div style={{ display: "flex", alignItems: "center", flexShrink: 0, borderBottom: "1px solid var(--border-subtle)", height: 36 }}>
           <div style={{ flex: 1, overflow: "hidden" }}>
             <TabBar
               tabs={fileTabs}
@@ -631,12 +627,13 @@ export function AppShell() {
     <button
       onClick={() => setRightPanelOpen((v) => !v)}
       title={rightPanelOpen ? "Hide file panel" : "Show file panel"}
+      className="glass-panel"
       style={{
         position: "fixed", top: 0, right: 0, zIndex: 300,
         display: "flex", alignItems: "center", justifyContent: "center",
         width: 36, height: 36, padding: 0,
-        background: "var(--bg-panel)", border: "none", borderLeft: "1px solid var(--border)", borderBottom: "1px solid var(--border)",
-        color: rightPanelOpen ? "var(--text)" : "var(--text-muted)",
+        borderLeft: "1px solid var(--border-subtle)", borderBottom: "1px solid var(--border-subtle)",
+        color: rightPanelOpen ? "var(--accent)" : "var(--text-muted)",
         cursor: "pointer", transition: "color 0.12s",
       }}
       onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}

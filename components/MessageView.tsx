@@ -130,9 +130,9 @@ function UserMessageView({ message, entryId, onFork, forking, onNavigate, prevAs
           style={{
             flex: 1,
             minWidth: 0,
-            background: "var(--user-bg)",
-            border: "1px solid rgba(59,130,246,0.2)",
-            borderRadius: 12,
+            background: "var(--user-bg-solid)",
+            border: "1px solid var(--accent-soft)",
+            borderRadius: 14,
             padding: "8px 12px",
             fontSize: 14,
             lineHeight: 1.6,
@@ -614,10 +614,11 @@ function ThinkingBlock({ block, duration }: { block: ThinkingContent; duration?:
   return (
     <div
       style={{
-        border: "1px solid var(--border)",
-        borderRadius: 6,
+        border: "1px solid var(--border-subtle)",
+        borderRadius: 8,
         overflow: "hidden",
         fontSize: 13,
+        background: "var(--accent-soft)",
       }}
     >
       <button
@@ -628,11 +629,12 @@ function ThinkingBlock({ block, duration }: { block: ThinkingContent; duration?:
           gap: 6,
           width: "100%",
           padding: "6px 10px",
-          background: "var(--bg-panel)",
+          background: "none",
           border: "none",
-          color: "var(--text-muted)",
+          color: "var(--accent)",
           cursor: "pointer",
           fontSize: 12,
+          fontWeight: 500,
           textAlign: "left",
         }}
       >
@@ -845,11 +847,11 @@ function ToolCallBlock({ block, result, isRunning, duration, onOpenFile, cwd }: 
   return (
     <div
       style={{
-        borderRadius: 7,
+        borderRadius: 8,
         overflow: "hidden",
         fontSize: 12,
-        border: isError ? "1px solid rgba(248,113,113,0.45)" : "1px solid rgba(34,197,94,0.25)",
-        background: isError ? "rgba(248,113,113,0.05)" : "rgba(34,197,94,0.04)",
+        border: isError ? "1px solid rgba(248,113,113,0.45)" : "1px solid var(--border-subtle)",
+        background: isError ? "rgba(248,113,113,0.05)" : "var(--accent-soft)",
       }}
     >
       {/* ── Tool call header ── */}
@@ -1002,16 +1004,17 @@ function CodeBlock({ code, lang }: { code: string; lang: string }) {
         position: "relative",
         marginTop: 4,
         marginBottom: 4,
-        borderRadius: 6,
+        borderRadius: 8,
         overflow: "hidden",
-        border: "1px solid var(--border)",
+        border: "1px solid var(--border-subtle)",
+        boxShadow: "var(--shadow-sm)",
       }}
     >
       <div
         style={{
           padding: "3px 10px",
           background: "var(--bg-panel)",
-          borderBottom: "1px solid var(--border)",
+          borderBottom: "1px solid var(--border-subtle)",
           fontSize: 11,
           color: "var(--text-dim)",
           display: "flex",

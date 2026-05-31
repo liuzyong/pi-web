@@ -332,6 +332,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
         {/* Main input */}
         <div
+          className="input-focus-ring"
           style={{
             display: "flex",
             gap: 8,
@@ -339,10 +340,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             background: "var(--bg)",
             border: `1px solid ${isStreaming && (onSteer || onFollowUp)
               ? "rgba(234,179,8,0.4)"
-              : "color-mix(in srgb, var(--border) 70%, transparent)"}`,
-            borderRadius: 14,
+              : "var(--border-subtle)"}`,
+            borderRadius: 18,
             padding: "10px 10px 10px 14px",
-            boxShadow: "0 1px 2px rgba(15,23,42,0.04), 0 8px 24px -12px rgba(15,23,42,0.10)",
+            boxShadow: "var(--shadow-md)",
             transition: "border-color 0.15s, background 0.15s, box-shadow 0.15s",
           } as React.CSSProperties}
         >
@@ -435,15 +436,15 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 alignSelf: "flex-end",
                 display: "flex", alignItems: "center", gap: 6,
                 padding: "7px 14px",
-                background: (value.trim() || attachedImages.length) ? "var(--accent)" : "var(--bg-panel)",
+                background: (value.trim() || attachedImages.length) ? "linear-gradient(135deg, var(--accent), var(--accent-hover))" : "var(--bg-panel)",
                 border: "none",
-                borderRadius: 8,
+                borderRadius: 10,
                 color: (value.trim() || attachedImages.length) ? "#fff" : "var(--text-dim)",
                 cursor: (value.trim() || attachedImages.length) ? "pointer" : "not-allowed",
                 fontSize: 13,
                 fontWeight: 600,
                 letterSpacing: "-0.01em",
-                boxShadow: (value.trim() || attachedImages.length) ? "0 1px 3px rgba(37,99,235,0.25)" : "none",
+                boxShadow: (value.trim() || attachedImages.length) ? "var(--shadow-glow), var(--shadow-sm)" : "none",
                 transition: "background 0.15s, box-shadow 0.15s",
               }}
             >

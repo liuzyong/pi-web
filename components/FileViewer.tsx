@@ -24,6 +24,52 @@ const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "
 const AUDIO_EXTS = new Set(["mp3", "wav", "ogg", "oga", "opus", "m4a", "aac", "flac", "weba", "webm"]);
 const DOCUMENT_EXTS = new Set(["pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx"]);
 
+/* ── Shared download button ── */
+function DownloadButton({ filePath }: { filePath: string }) {
+  const encoded = encodeFilePathForApi(filePath);
+  const fileName = getFileName(filePath);
+  const downloadUrl = `/api/files/${encoded}?type=read`;
+  return (
+    <a
+      href={downloadUrl}
+      download={fileName}
+      title={`下载 ${fileName}`}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 4,
+        padding: "2px 8px",
+        fontSize: 11,
+        cursor: "pointer",
+        background: "var(--bg-hover)",
+        color: "var(--text-muted)",
+        border: "1px solid var(--border)",
+        borderRadius: 5,
+        fontWeight: 400,
+        textDecoration: "none",
+        transition: "background 0.12s, color 0.12s, border-color 0.12s",
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.background = "var(--accent-soft)";
+        e.currentTarget.style.color = "var(--accent)";
+        e.currentTarget.style.borderColor = "var(--accent)";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = "var(--bg-hover)";
+        e.currentTarget.style.color = "var(--text-muted)";
+        e.currentTarget.style.borderColor = "var(--border)";
+      }}
+    >
+      <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+        <line x1="5" y1="1.5" x2="5" y2="7" />
+        <polyline points="2.5 5 5 7.5 7.5 5" />
+        <line x1="1.5" y1="9" x2="8.5" y2="9" />
+      </svg>
+      Download
+    </a>
+  );
+}
+
 function isImagePath(filePath: string): boolean {
   const base = getFileName(filePath);
   const ext = base.toLowerCase().split(".").pop() ?? "";
@@ -346,6 +392,7 @@ function ImageViewer({ filePath, cwd }: { filePath: string; cwd?: string }) {
         <span style={{ marginLeft: "auto" }}>{ext || "image"}</span>
         {naturalSize && <span>{naturalSize.w} × {naturalSize.h}</span>}
         {formatSizeStr && <span>{formatSizeStr}</span>}
+        <DownloadButton filePath={filePath} />
         <span
           title={watching ? "Live sync active" : "Not watching"}
           style={{ display: "flex", alignItems: "center", gap: 4, color: watching ? "#4ade80" : "var(--text-dim)" }}
@@ -480,6 +527,7 @@ function AudioViewer({ filePath, cwd }: { filePath: string; cwd?: string }) {
         <span style={{ marginLeft: "auto" }}>{ext || "audio"}</span>
         {duration != null && <span>{formatDuration(duration)}</span>}
         {size != null && <span>{formatSize(size)}</span>}
+        <DownloadButton filePath={filePath} />
         <span
           title={watching ? "Live sync active" : "Not watching"}
           style={{ display: "flex", alignItems: "center", gap: 4, color: watching ? "#4ade80" : "var(--text-dim)" }}
@@ -528,7 +576,7 @@ function AudioViewer({ filePath, cwd }: { filePath: string; cwd?: string }) {
   );
 }
 
-export function FileViewer({ filePath, cwd, onEditModeChange }: Props) {
+export function FileViewer({ filePath, cwd }: Props) {
   if (isImagePath(filePath)) {
     return <ImageViewer filePath={filePath} cwd={cwd} />;
   }
@@ -788,6 +836,7 @@ function TextFileViewer({ filePath, cwd }: Props) {
         <span style={{ marginLeft: "auto" }}>{data.language}</span>
         {viewMode === "source" && !isDocument && <span>{lines.length} lines</span>}
         <span>{formatSize(data.size)}</span>
+        <DownloadButton filePath={filePath} />
 
         {/* Live watch indicator */}
         <span
