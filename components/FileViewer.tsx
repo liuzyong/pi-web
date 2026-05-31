@@ -22,7 +22,7 @@ interface FileData {
 
 const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "avif"]);
 const AUDIO_EXTS = new Set(["mp3", "wav", "ogg", "oga", "opus", "m4a", "aac", "flac", "weba", "webm"]);
-const DOCUMENT_EXTS = new Set(["pdf", "doc", "docx"]);
+const DOCUMENT_EXTS = new Set(["pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx"]);
 
 function isImagePath(filePath: string): boolean {
   const base = getFileName(filePath);

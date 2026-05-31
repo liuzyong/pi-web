@@ -45,3 +45,4 @@ outputs/
 .spec-workflow/
 .claude/
 .playwright-mcp/
+output/

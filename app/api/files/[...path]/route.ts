@@ -280,36 +280,82 @@ export async function GET(
     }
 
     let stat: fs.Stats;
+    let resolvedFilePath = filePath;
     try {
       stat = fs.statSync(filePath);
     } catch {
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
+      // File not found at exact path — try fuzzy match in the same directory
+      // This handles cases where AI-generated text has a slightly different filename
+      // than the actual saved file (e.g. "现境保护" vs "环境保护")
+      const dir = path.dirname(filePath);
+      const base = path.basename(filePath);
+      try {
+        const entries = fs.readdirSync(dir);
+        // Find the closest match: same extension + highest character overlap ratio
+        const ext = base.split(".").pop()?.toLowerCase() ?? "";
+        const candidates = entries.filter(e => e.split(".").pop()?.toLowerCase() === ext);
+        if (candidates.length > 0) {
+          // Score by character overlap: count how many characters in the requested
+          // basename appear in the candidate, weighted by position
+          const scored = candidates.map(c => {
+            // Simple overlap: count characters that exist in both strings
+            const baseChars = [...base];
+            const candChars = [...c];
+            let overlap = 0;
+            const used = new Set<number>();
+            for (const ch of baseChars) {
+              const idx = candChars.findIndex((cc, i) => cc === ch && !used.has(i));
+              if (idx !== -1) {
+                overlap++;
+                used.add(idx);
+              }
+            }
+            const ratio = overlap / Math.max(baseChars.length, candChars.length);
+            return { name: c, score: ratio };
+          });
+          scored.sort((a, b) => b.score - a.score);
+          const best = scored[0];
+          // Accept if at least 70% of characters overlap
+          if (best.score >= 0.7) {
+            const fuzzyPath = path.join(dir, best.name);
+            if (isPathAllowed(fuzzyPath, allowedRoots)) {
+              resolvedFilePath = fuzzyPath;
+              stat = fs.statSync(fuzzyPath);
+            }
+          }
+        }
+      } catch {
+        // Directory doesn't exist either — return 404
+      }
+      if (!stat) {
+        return NextResponse.json({ error: "Not found" }, { status: 404 });
+      }
     }
 
     if (type === "read") {
       if (!stat.isFile()) {
         return NextResponse.json({ error: "Not a file" }, { status: 400 });
       }
-      const imageMime = getImageMime(filePath);
+      const imageMime = getImageMime(resolvedFilePath);
       if (imageMime) {
         if (stat.size > IMAGE_PREVIEW_MAX_BYTES) {
           return NextResponse.json({ error: "Image too large (>10MB)" }, { status: 413 });
         }
-        return streamFile(filePath, stat, imageMime, request.headers.get("range"));
+        return streamFile(resolvedFilePath, stat, imageMime, request.headers.get("range"));
       }
-      const audioMime = getAudioMime(filePath);
+      const audioMime = getAudioMime(resolvedFilePath);
       if (audioMime) {
-        return streamFile(filePath, stat, audioMime, request.headers.get("range"));
+        return streamFile(resolvedFilePath, stat, audioMime, request.headers.get("range"));
       }
-      const documentMime = getDocumentMime(filePath);
+      const documentMime = getDocumentMime(resolvedFilePath);
       if (documentMime) {
-        return streamFile(filePath, stat, documentMime, request.headers.get("range"));
+        return streamFile(resolvedFilePath, stat, documentMime, request.headers.get("range"));
       }
       if (stat.size > TEXT_PREVIEW_MAX_BYTES) {
         return NextResponse.json({ error: "File too large for preview (>256KB)" }, { status: 413 });
       }
-      const content = fs.readFileSync(filePath, "utf-8");
-      const language = getLanguage(filePath);
+      const content = fs.readFileSync(resolvedFilePath, "utf-8");
+      const language = getLanguage(resolvedFilePath);
       return NextResponse.json({ content, language, size: stat.size });
     }
 
@@ -317,14 +363,14 @@ export async function GET(
       if (!stat.isFile()) {
         return NextResponse.json({ error: "Not a file" }, { status: 400 });
       }
-      const documentMime = getDocumentMime(filePath);
+      const documentMime = getDocumentMime(resolvedFilePath);
       if (!documentMime) {
         return NextResponse.json({ error: "Preview not available" }, { status: 400 });
       }
-      if (filePath.toLowerCase().endsWith(".docx")) {
+      if (resolvedFilePath.toLowerCase().endsWith(".docx")) {
         try {
           const { convertToHtml } = await import("mammoth");
-          const buffer = fs.readFileSync(filePath);
+          const buffer = fs.readFileSync(resolvedFilePath);
           const result = await convertToHtml({ buffer });
           // 包裹完整的文档排版样式，模拟 Word 页面外观
           const html = `<!DOCTYPE html>
@@ -384,12 +430,12 @@ ${result.value}
       if (!stat.isFile()) {
         return NextResponse.json({ error: "Not a file" }, { status: 400 });
       }
-      const documentMime = getDocumentMime(filePath);
-      const imageMime = getImageMime(filePath);
-      const audioMime = getAudioMime(filePath);
+      const documentMime = getDocumentMime(resolvedFilePath);
+      const imageMime = getImageMime(resolvedFilePath);
+      const audioMime = getAudioMime(resolvedFilePath);
       return NextResponse.json({
         size: stat.size,
-        language: getLanguage(filePath),
+        language: getLanguage(resolvedFilePath),
         mime: imageMime || audioMime || documentMime || "application/octet-stream",
       });
     }
@@ -410,11 +456,11 @@ ${result.value}
             }
           };
           // Send initial ping so client knows connection is live
-          send("connected", { filePath });
+          send("connected", { filePath: resolvedFilePath });
           try {
-            watcher = fs.watch(filePath, () => {
+            watcher = fs.watch(resolvedFilePath, () => {
               try {
-                const s = fs.statSync(filePath);
+                const s = fs.statSync(resolvedFilePath);
                 send("change", { mtime: s.mtime.toISOString(), size: s.size });
               } catch {
                 send("change", { mtime: new Date().toISOString(), size: 0 });
@@ -447,11 +493,11 @@ ${result.value}
       return NextResponse.json({ error: "Not a directory" }, { status: 400 });
     }
 
-    const names = fs.readdirSync(filePath);
+    const names = fs.readdirSync(resolvedFilePath);
     const entries = names
       .filter((name) => !IGNORED_NAMES.has(name) && !IGNORED_SUFFIXES.some((s) => name.endsWith(s)))
       .map((name) => {
-        const full = path.join(filePath, name);
+        const full = path.join(resolvedFilePath, name);
         try {
           const s = fs.statSync(full);
           return {

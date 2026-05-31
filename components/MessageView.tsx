@@ -7,7 +7,7 @@ import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vs } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import { useTheme } from "@/hooks/useTheme";
-import { DocFileIcon, PdfFileIcon, PptFileIcon, XlsFileIcon } from "./FileIcons";
+import { getFileIcon } from "./FileIcons";
 import type {
   AgentMessage,
   UserMessage,
@@ -342,29 +342,28 @@ function AssistantMessageView({
     .map((b) => b.text)
     .join("\n");
 
-  // Collect all document paths from text blocks and tool call blocks
-  // Normalize paths before deduping: resolve relative to cwd, unify slashes
-  const allDocPaths = useMemo(() => {
+  // Collect output file paths from text blocks and tool call blocks
+  // Only files under outputs/ or output/ directories are considered AI-generated
+  const outputFilePaths = useMemo(() => {
     const paths: string[] = [];
     for (const block of blocks) {
       if (block.type === "text") {
-        paths.push(...extractDocPathsFromText((block as TextContent).text));
+        paths.push(...extractOutputPathsFromText((block as TextContent).text));
       }
       if (block.type === "toolCall") {
         const tc = block as ToolCallContent;
         const result = toolResults?.get(tc.toolCallId);
-        paths.push(...extractDocPathsFromToolCall(tc, result));
+        paths.push(...extractOutputPathsFromToolCall(tc, result));
       }
     }
     // Dedupe by filename (basename) — same file may appear as absolute path
     // and as relative/filename-only reference, e.g. "outputs/foo.docx" vs "foo.docx"
     // Prefer the longest (most specific) path for each unique filename
-    const byBasename = new Map<string, string>(); // basename.lowercase -> best path
+    const byBasename = new Map<string, string>();
     for (const p of paths) {
       const resolved = resolveFilePath(p, cwd).replace(/\\/g, "/");
       const basename = resolved.split("/").pop()?.toLowerCase() ?? resolved.toLowerCase();
       const existing = byBasename.get(basename);
-      // Keep the longer (more specific/absolute) path
       if (!existing || resolved.length > existing.length) {
         byBasename.set(basename, resolved);
       }
@@ -493,14 +492,14 @@ function AssistantMessageView({
         ))}
       </div>
 
-      {/* ── Document cards ── */}
-      {/* Only show document cards in messages that contain text content.
-          Pure tool-call messages skip doc cards because the subsequent
-          text-response message will include the same paths, avoiding duplicates. */}
-      {allDocPaths.length > 0 && textContent.trim().length > 0 && (
+      {/* ── File cards ── */}
+      {/* Show file cards when we have output file paths AND either text content
+          or a Write tool call (which is an explicit file creation intent).
+          Only files under outputs/ or output/ directories are shown. */}
+      {outputFilePaths.length > 0 && (textContent.trim().length > 0 || blocks.some(b => b.type === "toolCall" && ((b as ToolCallContent).toolName === "write" || (b as ToolCallContent).toolName === "Write"))) && (
         <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 4 }}>
-          {allDocPaths.map((p, i) => (
-            <DocumentCard key={`${p}-${i}`} filePath={p} onOpenFile={onOpenFile} cwd={cwd} />
+          {outputFilePaths.map((p, i) => (
+            <FileCard key={`${p}-${i}`} filePath={p} onOpenFile={onOpenFile} cwd={cwd} />
           ))}
         </div>
       )}
@@ -664,59 +663,94 @@ function ThinkingBlock({ block, duration }: { block: ThinkingContent; duration?:
 
 // ── Document type detection helpers ────────────────────────────────────────
 
-const DOC_EXTENSIONS = new Set(["pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx"]);
-
-const DOC_TYPE_LABELS: Record<string, string> = {
+// File type label mapping — covers all major categories
+const FILE_TYPE_LABELS: Record<string, string> = {
+  // Documents
   pdf: "PDF 文档",
-  doc: "Word 文档",
-  docx: "Word 文档",
-  ppt: "PPT 演示文稿",
-  pptx: "PPT 演示文稿",
-  xls: "Excel 表格",
-  xlsx: "Excel 表格",
+  doc: "Word 文档", docx: "Word 文档",
+  ppt: "PPT 演示文稿", pptx: "PPT 演示文稿",
+  xls: "Excel 表格", xlsx: "Excel 表格",
+  // Code
+  ts: "TypeScript", tsx: "TypeScript React",
+  js: "JavaScript", jsx: "JavaScript React",
+  mjs: "JavaScript", cjs: "JavaScript",
+  py: "Python", rb: "Ruby",
+  go: "Go", rs: "Rust",
+  java: "Java", kt: "Kotlin", swift: "Swift",
+  c: "C", cpp: "C++", h: "C Header", hpp: "C++ Header",
+  cs: "C#", sql: "SQL",
+  graphql: "GraphQL", gql: "GraphQL",
+  // Web / config
+  html: "HTML", htm: "HTML",
+  css: "CSS", scss: "SCSS", less: "LESS",
+  json: "JSON", jsonl: "JSON Lines",
+  yaml: "YAML", yml: "YAML", toml: "TOML",
+  xml: "XML", sh: "Shell", bash: "Shell",
+  dockerfile: "Dockerfile",
+  // Content
+  md: "Markdown", mdx: "MDX",
+  txt: "Text", csv: "CSV",
+  env: "Environment",
+  // Images
+  png: "图片", jpg: "图片", jpeg: "图片",
+  gif: "图片", webp: "图片", svg: "图片",
+  bmp: "图片", ico: "图片", avif: "图片",
+  // Audio
+  mp3: "音频", wav: "音频", ogg: "音频",
+  m4a: "音频", flac: "音频", weba: "音频",
+  // Video
+  mp4: "视频", webm: "视频", avi: "视频", mov: "视频",
 };
 
-function getDocIcon(ext: string, size = 16): React.ReactNode {
-  switch (ext) {
-    case "pdf": return <PdfFileIcon size={size} />;
-    case "doc": case "docx": return <DocFileIcon size={size} />;
-    case "ppt": case "pptx": return <PptFileIcon size={size} />;
-    case "xls": case "xlsx": return <XlsFileIcon size={size} />;
-    default: return null;
+// AI output directory names — files under these folders are AI-generated outputs
+const OUTPUT_DIR_NAMES = ["outputs", "output"];
+
+function isOutputFilePath(filePath: string): boolean {
+  const normalized = filePath.replace(/\\/g, "/");
+  // Match paths that start with an output dir name (relative: "outputs/...", "output/...")
+  // or contain an output dir as a segment (absolute: ".../outputs/...", ".../output/...")
+  for (const dirName of OUTPUT_DIR_NAMES) {
+    // Relative path: starts with "outputs/" or "output/"
+    if (normalized.startsWith(dirName + "/")) return true;
+    // Absolute path: contains "/outputs/" or "/output/" as a segment
+    if (normalized.includes("/" + dirName + "/")) return true;
   }
+  return false;
 }
 
-function isDocFilePath(filePath: string): boolean {
+function hasFileExtension(filePath: string): boolean {
   const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
-  return DOC_EXTENSIONS.has(ext);
+  return ext.length > 0 && ext.length <= 8 && FILE_TYPE_LABELS[ext] !== undefined;
 }
 
-function extractDocPathsFromToolCall(block: ToolCallContent, result?: ToolResultMessage): string[] {
+// Regex to extract paths under output directories from text
+// Matches: "outputs/foo.docx", "output/bar.py", "/path/to/outputs/file.pdf", etc.
+const OUTPUT_PATH_REGEX = /[^\s"'`]*?(?:outputs|output)[\\/][^\s"'`]+\.[a-zA-Z]{1,8}/gi;
+
+function extractOutputPathsFromToolCall(block: ToolCallContent, result?: ToolResultMessage): string[] {
   const paths: string[] = [];
   const input = block.input;
 
-  // Check common file path fields in tool input
-  if ("file_path" in input && typeof input.file_path === "string" && isDocFilePath(input.file_path)) {
+  // Write tool: if file_path is under an output directory, include it
+  if ("file_path" in input && typeof input.file_path === "string" && isOutputFilePath(input.file_path)) {
     paths.push(input.file_path);
   }
-  if ("path" in input && typeof input.path === "string" && isDocFilePath(input.path)) {
+  if ("path" in input && typeof input.path === "string" && isOutputFilePath(input.path)) {
     paths.push(input.path);
   }
+  // Bash command: extract output directory paths
   if ("command" in input && typeof input.command === "string") {
-    // Extract file paths from command strings like "Created file: xxx.docx"
-    const docPathRegex = /[^\s"'"]+\.(?:pdf|docx?|pptx?|xlsx?)\b/gi;
-    const matches = input.command.match(docPathRegex);
+    const matches = input.command.match(OUTPUT_PATH_REGEX);
     if (matches) paths.push(...matches);
   }
 
-  // Also check result text for file paths
+  // Also check result text for output file paths
   if (result) {
     const resultText = result.content
       .filter((b): b is { type: "text"; text: string } => b.type === "text")
       .map((b) => b.text)
       .join("\n");
-    const docPathRegex = /[^\s"'"]+\.(?:pdf|docx?|pptx?|xlsx?)\b/gi;
-    const matches = resultText.match(docPathRegex);
+    const matches = resultText.match(OUTPUT_PATH_REGEX);
     if (matches) {
       for (const m of matches) {
         if (!paths.includes(m)) paths.push(m);
@@ -727,14 +761,13 @@ function extractDocPathsFromToolCall(block: ToolCallContent, result?: ToolResult
   return [...new Set(paths)];
 }
 
-// Extract document file paths from plain text content
-function extractDocPathsFromText(text: string): string[] {
-  const docPathRegex = /[^\s"'`]+\.(?:pdf|docx?|pptx?|xlsx?)\b/gi;
-  const matches = text.match(docPathRegex);
-  return matches ? [...new Set(matches)] : [];
+function extractOutputPathsFromText(text: string): string[] {
+  const matches = text.match(OUTPUT_PATH_REGEX);
+  if (!matches) return [];
+  return [...new Set(matches)];
 }
 
-// ── DocumentCard ──────────────────────────────────────────────────────────
+// ── FileCard ──────────────────────────────────────────────────────────
 
 function resolveFilePath(filePath: string, cwd?: string): string {
   // Already an absolute path (Windows: C:\... or POSIX: /...)
@@ -748,13 +781,13 @@ function resolveFilePath(filePath: string, cwd?: string): string {
   return filePath;
 }
 
-function DocumentCard({ filePath, onOpenFile, cwd }: { filePath: string; onOpenFile?: (filePath: string, fileName: string) => void; cwd?: string }) {
+function FileCard({ filePath, onOpenFile, cwd }: { filePath: string; onOpenFile?: (filePath: string, fileName: string) => void; cwd?: string }) {
   const [hovered, setHovered] = useState(false);
   const resolvedPath = resolveFilePath(filePath, cwd);
   const fileName = resolvedPath.split(/[\\/]/).pop() ?? resolvedPath;
   const ext = fileName.split(".").pop()?.toLowerCase() ?? "";
-  const typeLabel = DOC_TYPE_LABELS[ext] ?? "文档";
-  const icon = getDocIcon(ext, 16);
+  const typeLabel = FILE_TYPE_LABELS[ext] ?? "文件";
+  const icon = getFileIcon(fileName, 18);
 
   const handleClick = () => {
     onOpenFile?.(resolvedPath, fileName);
@@ -778,7 +811,7 @@ function DocumentCard({ filePath, onOpenFile, cwd }: { filePath: string; onOpenF
         marginTop: 4,
       }}
     >
-      {icon && <span style={{ flexShrink: 0, display: "flex", alignItems: "center" }}>{icon}</span>}
+      <span style={{ flexShrink: 0, display: "flex", alignItems: "center" }}>{icon}</span>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 14, fontWeight: 500, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {fileName}
