@@ -13,6 +13,7 @@ const IGNORED_SUFFIXES = [".pyc"];
 
 const TEXT_PREVIEW_MAX_BYTES = 256 * 1024;
 const IMAGE_PREVIEW_MAX_BYTES = 10 * 1024 * 1024;
+const DOCX_PREVIEW_MAX_BYTES = 10 * 1024 * 1024;
 
 const IMAGE_EXT_TO_MIME: Record<string, string> = {
   png: "image/png",
@@ -89,6 +90,56 @@ function getLanguage(filePath: string): string {
   if (base === "makefile" || base === "gnumakefile") return "makefile";
   const ext = base.split(".").pop() ?? "";
   return EXT_TO_LANGUAGE[ext] ?? "text";
+}
+
+function documentPreviewKind(filePath: string): "pdf" | "docx" | null {
+  const ext = getExt(filePath);
+  if (ext === "pdf") return "pdf";
+  if (ext === "docx") return "docx";
+  return null;
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function wrapDocxPreviewHtml(bodyHtml: string, fileName: string): string {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      :root { color-scheme: light; }
+      html, body { margin: 0; min-height: 100%; background: #eef1f5; color: #171717; }
+      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; padding: 28px; }
+      main { box-sizing: border-box; max-width: 840px; min-height: calc(100vh - 56px); margin: 0 auto; padding: 56px 64px; background: #fff; box-shadow: 0 8px 28px rgba(15, 23, 42, 0.14); }
+      .file-title { margin: 0 0 28px; padding-bottom: 10px; border-bottom: 1px solid #e5e7eb; color: #6b7280; font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; word-break: break-word; }
+      h1, h2, h3, h4, h5, h6 { line-height: 1.3; margin: 1.1em 0 0.45em; color: #111827; }
+      p { margin: 0.65em 0; line-height: 1.7; }
+      table { border-collapse: collapse; max-width: 100%; margin: 1em 0; }
+      th, td { border: 1px solid #d1d5db; padding: 6px 9px; vertical-align: top; }
+      img { max-width: 100%; height: auto; }
+      pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+      a { color: #2563eb; }
+      @media (max-width: 720px) {
+        body { padding: 0; background: #fff; }
+        main { min-height: 100vh; padding: 28px 22px; box-shadow: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="file-title">${escapeHtml(fileName)}</div>
+      ${bodyHtml}
+    </main>
+  </body>
+</html>`;
 }
 
 // Short-TTL cache for the allowed-roots set. Without this, every file list/read
@@ -279,7 +330,7 @@ export async function GET(
       return NextResponse.json({ error: "Access denied" }, { status: 403 });
     }
 
-    let stat: fs.Stats;
+    let stat: fs.Stats | undefined;
     let resolvedFilePath = filePath;
     try {
       stat = fs.statSync(filePath);
@@ -368,55 +419,26 @@ export async function GET(
         return NextResponse.json({ error: "Preview not available" }, { status: 400 });
       }
       if (resolvedFilePath.toLowerCase().endsWith(".docx")) {
+        if (stat.size > DOCX_PREVIEW_MAX_BYTES) {
+          return new NextResponse("File too large", { status: 413 });
+        }
         try {
-          const { convertToHtml } = await import("mammoth");
-          const buffer = fs.readFileSync(resolvedFilePath);
-          const result = await convertToHtml({ buffer });
-          // 包裹完整的文档排版样式，模拟 Word 页面外观
-          const html = `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<style>
-  @page { margin: 2cm; }
-  body {
-    font-family: "SimSun", "Times New Roman", serif;
-    font-size: 12pt;
-    line-height: 1.8;
-    color: #000;
-    background: #fff;
-    max-width: 800px;
-    margin: 0 auto;
-    padding: 40px 60px;
-  }
-  h1 { font-size: 22pt; font-weight: bold; margin: 0.8em 0 0.4em; line-height: 1.4; text-align: center; }
-  h2 { font-size: 16pt; font-weight: bold; margin: 0.6em 0 0.3em; line-height: 1.4; }
-  h3 { font-size: 14pt; font-weight: bold; margin: 0.5em 0 0.2em; line-height: 1.4; }
-  h4 { font-size: 12pt; font-weight: bold; margin: 0.4em 0 0.2em; line-height: 1.4; }
-  p { margin: 0.5em 0; text-indent: 0; }
-  p[style*="text-align: center"] { text-indent: 0; }
-  table { border-collapse: collapse; width: 100%; margin: 1em 0; }
-  td, th { border: 1px solid #000; padding: 6px 10px; text-align: left; vertical-align: top; }
-  th { background: #f0f0f0; font-weight: bold; }
-  ul, ol { margin: 0.5em 0; padding-left: 2em; }
-  li { margin: 0.2em 0; }
-  img { max-width: 100%; height: auto; }
-  a { color: #0563C1; text-decoration: underline; }
-  blockquote { margin: 0.5em 0; padding-left: 1em; border-left: 3px solid #ccc; color: #555; }
-  strong { font-weight: bold; }
-  em { font-style: italic; }
-  u { text-decoration: underline; }
-  del, s { text-decoration: line-through; }
-</style>
-</head>
-<body>
-${result.value}
-</body>
-</html>`;
+          const mammoth = await import("mammoth");
+          const result = await mammoth.convertToHtml(
+            { path: resolvedFilePath },
+            {
+              externalFileAccess: false,
+              convertImage: mammoth.images.dataUri,
+            }
+          );
+          const html = wrapDocxPreviewHtml(result.value, path.basename(resolvedFilePath));
           return new Response(html, {
             headers: {
               "Content-Type": "text/html; charset=utf-8",
               "Cache-Control": "no-cache",
+              "Content-Security-Policy": "default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'",
+              "Referrer-Policy": "no-referrer",
+              "X-Content-Type-Options": "nosniff",
             },
           });
         } catch (error) {
@@ -437,6 +459,7 @@ ${result.value}
         size: stat.size,
         language: getLanguage(resolvedFilePath),
         mime: imageMime || audioMime || documentMime || "application/octet-stream",
+        previewKind: documentPreviewKind(resolvedFilePath),
       });
     }
 
