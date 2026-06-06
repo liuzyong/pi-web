@@ -1,0 +1,5 @@
+{
+  "lastChangelogVersion": "0.75.5",
+  "defaultProvider": "cvicse-glm",
+  "defaultModel": "glm-4.7-fp8"
+}

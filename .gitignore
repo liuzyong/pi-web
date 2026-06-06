@@ -41,8 +41,10 @@ yarn-error.log*
 next-env.d.ts
 .factory
 outputs/
-.pi/
+
 .spec-workflow/
 .claude/
 .playwright-mcp/
 output/
+.pi/agent/sessions
+.pi/agent/bin/

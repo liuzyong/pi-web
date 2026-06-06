@@ -1,0 +1,31 @@
+{
+  "providers": {
+    "cvicse-glm": {
+      "baseUrl": "http://192.168.3.59:9080/glm-4.7/",
+      "api": "openai-completions",
+      "apiKey": "i2DlwO6GxdP0%D6O5p7gBlJ4zpL2jZglm47",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false
+      },
+      "models": [
+        {
+          "id": "glm-4.7-fp8",
+          "name": "glm-4.7-fp8",
+          "reasoning": true,
+          "input": [
+            "text"
+          ],
+          "contextWindow": 128000,
+          "maxTokens": 8192,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          }
+        }
+      ]
+    }
+  }
+}
