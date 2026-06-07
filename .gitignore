@@ -48,3 +48,4 @@ outputs/
 output/
 .pi/agent/sessions
 .pi/agent/bin/
+.llm-wiki/
