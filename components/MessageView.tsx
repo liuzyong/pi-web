@@ -19,6 +19,13 @@ import type {
   ToolCallContent,
   ThinkingContent,
 } from "@/lib/types";
+import {
+  extractIntentionsFromMessage,
+  getVisibleIntentions,
+  getDetectionConfig,
+  type FileIntention,
+  type FileMutationKind,
+} from "@/lib/file-intent";
 
 interface Props {
   message: AgentMessage;
@@ -342,33 +349,37 @@ function AssistantMessageView({
     .map((b) => b.text)
     .join("\n");
 
-  // Collect output file paths from text blocks and tool call blocks
-  // Only files under outputs/ or output/ directories are considered AI-generated
-  const outputFilePaths = useMemo(() => {
-    const paths: string[] = [];
-    for (const block of blocks) {
-      if (block.type === "text") {
-        paths.push(...extractOutputPathsFromText((block as TextContent).text));
-      }
-      if (block.type === "toolCall") {
-        const tc = block as ToolCallContent;
-        const result = toolResults?.get(tc.toolCallId);
-        paths.push(...extractOutputPathsFromToolCall(tc, result));
-      }
-    }
-    // Dedupe by filename (basename) — same file may appear as absolute path
-    // and as relative/filename-only reference, e.g. "outputs/foo.docx" vs "foo.docx"
-    // Prefer the longest (most specific) path for each unique filename
-    const byBasename = new Map<string, string>();
-    for (const p of paths) {
-      const resolved = resolveFilePath(p, cwd).replace(/\\/g, "/");
+  // Collect file intentions (mutations) from text blocks and tool call blocks.
+  // Detection is intent-based: any file the AI caused to change, regardless of
+  // which directory it lives in. Backed by lib/file-intent.ts.
+  const fileIntentions = useMemo<FileIntention[]>(() => {
+    const config = getDetectionConfig();
+    const raw = extractIntentionsFromMessage(blocks, toolResults, config);
+    const visible = getVisibleIntentions(raw, config);
+    // Dedupe by filename (basename) — same file may appear via tool input,
+    // bash output, or result text, and as both absolute and relative paths.
+    // Prefer the longest (most specific) path; on basename tie, prefer
+    // `create` over `edit` so a re-create replaces an earlier edit.
+    const byBasename = new Map<string, FileIntention>();
+    const kindRank: Record<FileMutationKind, number> = { create: 2, edit: 1 };
+    for (const intent of visible) {
+      const resolved = resolveFilePath(intent.path, cwd).replace(/\\/g, "/");
       const basename = resolved.split("/").pop()?.toLowerCase() ?? resolved.toLowerCase();
       const existing = byBasename.get(basename);
-      if (!existing || resolved.length > existing.length) {
-        byBasename.set(basename, resolved);
+      if (!existing) {
+        byBasename.set(basename, { ...intent, path: resolved });
+        continue;
+      }
+      const samePath = existing.path === resolved;
+      const longerPath = resolved.length > existing.path.length;
+      const betterKind = kindRank[intent.kind] > kindRank[existing.kind];
+      if (samePath && betterKind) {
+        byBasename.set(basename, { ...intent, path: resolved });
+      } else if (longerPath && !samePath) {
+        byBasename.set(basename, { ...intent, path: resolved });
       }
     }
-    return [...byBasename.values()];
+    return Array.from(byBasename.values());
   }, [blocks, toolResults, cwd]);
 
   const copyContent = () => {
@@ -493,13 +504,19 @@ function AssistantMessageView({
       </div>
 
       {/* ── File cards ── */}
-      {/* Show file cards when we have output file paths AND either text content
-          or a Write tool call (which is an explicit file creation intent).
-          Only files under outputs/ or output/ directories are shown. */}
-      {outputFilePaths.length > 0 && (textContent.trim().length > 0 || blocks.some(b => b.type === "toolCall" && ((b as ToolCallContent).toolName === "write" || (b as ToolCallContent).toolName === "Write"))) && (
+      {/* Show file cards for every AI-mutated file detected from the message.
+          `fileIntentions` already filters non-mutation tools (read/list/grep etc.),
+          so a non-empty list is sufficient — no extra text/tool gating needed. */}
+      {fileIntentions.length > 0 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 4 }}>
-          {outputFilePaths.map((p, i) => (
-            <FileCard key={`${p}-${i}`} filePath={p} onOpenFile={onOpenFile} cwd={cwd} />
+          {fileIntentions.map((intent, i) => (
+            <FileCard
+              key={`${intent.path}-${i}`}
+              filePath={intent.path}
+              kind={intent.kind}
+              onOpenFile={onOpenFile}
+              cwd={cwd}
+            />
           ))}
         </div>
       )}
@@ -819,71 +836,6 @@ const FILE_TYPE_LABELS: Record<string, string> = {
   mp4: "视频", webm: "视频", avi: "视频", mov: "视频",
 };
 
-// AI output directory names — files under these folders are AI-generated outputs
-const OUTPUT_DIR_NAMES = ["outputs", "output"];
-
-function isOutputFilePath(filePath: string): boolean {
-  const normalized = filePath.replace(/\\/g, "/");
-  // Match paths that start with an output dir name (relative: "outputs/...", "output/...")
-  // or contain an output dir as a segment (absolute: ".../outputs/...", ".../output/...")
-  for (const dirName of OUTPUT_DIR_NAMES) {
-    // Relative path: starts with "outputs/" or "output/"
-    if (normalized.startsWith(dirName + "/")) return true;
-    // Absolute path: contains "/outputs/" or "/output/" as a segment
-    if (normalized.includes("/" + dirName + "/")) return true;
-  }
-  return false;
-}
-
-function hasFileExtension(filePath: string): boolean {
-  const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
-  return ext.length > 0 && ext.length <= 8 && FILE_TYPE_LABELS[ext] !== undefined;
-}
-
-// Regex to extract paths under output directories from text
-// Matches: "outputs/foo.docx", "output/bar.py", "/path/to/outputs/file.pdf", etc.
-const OUTPUT_PATH_REGEX = /[^\s"'`]*?(?:outputs|output)[\\/][^\s"'`]+\.[a-zA-Z]{1,8}/gi;
-
-function extractOutputPathsFromToolCall(block: ToolCallContent, result?: ToolResultMessage): string[] {
-  const paths: string[] = [];
-  const input = block.input;
-
-  // Write tool: if file_path is under an output directory, include it
-  if ("file_path" in input && typeof input.file_path === "string" && isOutputFilePath(input.file_path)) {
-    paths.push(input.file_path);
-  }
-  if ("path" in input && typeof input.path === "string" && isOutputFilePath(input.path)) {
-    paths.push(input.path);
-  }
-  // Bash command: extract output directory paths
-  if ("command" in input && typeof input.command === "string") {
-    const matches = input.command.match(OUTPUT_PATH_REGEX);
-    if (matches) paths.push(...matches);
-  }
-
-  // Also check result text for output file paths
-  if (result) {
-    const resultText = result.content
-      .filter((b): b is { type: "text"; text: string } => b.type === "text")
-      .map((b) => b.text)
-      .join("\n");
-    const matches = resultText.match(OUTPUT_PATH_REGEX);
-    if (matches) {
-      for (const m of matches) {
-        if (!paths.includes(m)) paths.push(m);
-      }
-    }
-  }
-
-  return [...new Set(paths)];
-}
-
-function extractOutputPathsFromText(text: string): string[] {
-  const matches = text.match(OUTPUT_PATH_REGEX);
-  if (!matches) return [];
-  return [...new Set(matches)];
-}
-
 // ── FileCard ──────────────────────────────────────────────────────────
 
 function resolveFilePath(filePath: string, cwd?: string): string {
@@ -898,7 +850,7 @@ function resolveFilePath(filePath: string, cwd?: string): string {
   return filePath;
 }
 
-function FileCard({ filePath, onOpenFile, cwd }: { filePath: string; onOpenFile?: (filePath: string, fileName: string) => void; cwd?: string }) {
+function FileCard({ filePath, kind = "create", onOpenFile, cwd }: { filePath: string; kind?: FileMutationKind; onOpenFile?: (filePath: string, fileName: string) => void; cwd?: string }) {
   const [hovered, setHovered] = useState(false);
   const resolvedPath = resolveFilePath(filePath, cwd);
   const fileName = resolvedPath.split(/[\\/]/).pop() ?? resolvedPath;
@@ -934,7 +886,7 @@ function FileCard({ filePath, onOpenFile, cwd }: { filePath: string; onOpenFile?
           {fileName}
         </div>
         <div style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 1 }}>
-          {typeLabel} · 已生成
+          {typeLabel} · {kind === "create" ? "✓ 已生成" : "✎ 已编辑"}
         </div>
       </div>
       {onOpenFile && (
