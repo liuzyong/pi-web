@@ -34,6 +34,7 @@ export interface ImageContent {
 export interface FileContent {
   type: "file";
   name: string;
+  relativePath?: string;
   mimeType: string;
   size: number;
   // data:<mime>;base64,XXX or external URL — must be a downloadable/previewable href

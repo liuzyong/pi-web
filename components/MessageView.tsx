@@ -196,7 +196,7 @@ function UserMessageView({ message, entryId, onFork, forking, onNavigate, prevAs
                   target="_blank"
                   rel="noopener noreferrer"
                   download={file.name}
-                  title={`${file.name} (${file.mimeType})`}
+                  title={file.relativePath ? `${file.relativePath} (${file.mimeType})` : `${file.name} (${file.mimeType})`}
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -232,7 +232,7 @@ function UserMessageView({ message, entryId, onFork, forking, onNavigate, prevAs
                         textOverflow: "ellipsis",
                       }}
                     >
-                      {file.name}
+                      {file.relativePath || file.name}
                     </span>
                     <span style={{ fontSize: 11, opacity: 0.65 }}>{formatFileSize(file.size)}</span>
                   </span>
