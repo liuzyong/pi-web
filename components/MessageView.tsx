@@ -16,6 +16,7 @@ import type {
   AssistantContentBlock,
   TextContent,
   ImageContent,
+  FileContent,
   ToolCallContent,
   ThinkingContent,
 } from "@/lib/types";
@@ -55,6 +56,14 @@ function formatTime(ts?: number): string | null {
   if (isToday) return time;
   const date = d.toLocaleDateString([], { month: "short", day: "numeric", year: d.getFullYear() !== now.getFullYear() ? "numeric" : undefined });
   return `${date} ${time}`;
+}
+
+function formatFileSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
 function copyText(text: string): Promise<void> {
@@ -115,6 +124,11 @@ function UserMessageView({ message, entryId, onFork, forking, onNavigate, prevAs
       ? []
       : message.content.filter((b): b is ImageContent => b.type === "image");
 
+  const fileBlocks: FileContent[] =
+    typeof message.content === "string"
+      ? []
+      : message.content.filter((b): b is FileContent => b.type === "file");
+
   const time = formatTime(message.timestamp);
   const canFork = !!entryId && !!onFork;
   const canNavigate = !!prevAssistantEntryId && !!onNavigate;
@@ -171,6 +185,59 @@ function UserMessageView({ message, entryId, onFork, forking, onNavigate, prevAs
                   />
                 );
               })}
+            </div>
+          )}
+          {fileBlocks.length > 0 && (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: content ? 8 : 0 }}>
+              {fileBlocks.map((file, i) => (
+                <a
+                  key={i}
+                  href={file.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  download={file.name}
+                  title={`${file.name} (${file.mimeType})`}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    minWidth: 180,
+                    maxWidth: 280,
+                    padding: "8px 10px",
+                    background: "var(--card-bg, rgba(255,255,255,0.04))",
+                    border: "1px solid var(--accent-soft, rgba(59,130,246,0.2))",
+                    borderRadius: 8,
+                    textDecoration: "none",
+                    color: "var(--text)",
+                    fontSize: 13,
+                    lineHeight: 1.3,
+                    transition: "background 120ms",
+                  }}
+                  onMouseEnter={(e) => {
+                    (e.currentTarget as HTMLElement).style.background = "var(--accent-soft, rgba(59,130,246,0.12))";
+                  }}
+                  onMouseLeave={(e) => {
+                    (e.currentTarget as HTMLElement).style.background = "var(--card-bg, rgba(255,255,255,0.04))";
+                  }}
+                >
+                  <span style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
+                    {getFileIcon(file.name, 24)}
+                  </span>
+                  <span style={{ display: "flex", flexDirection: "column", minWidth: 0, flex: 1 }}>
+                    <span
+                      style={{
+                        fontWeight: 500,
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {file.name}
+                    </span>
+                    <span style={{ fontSize: 11, opacity: 0.65 }}>{formatFileSize(file.size)}</span>
+                  </span>
+                </a>
+              ))}
             </div>
           )}
           {content}

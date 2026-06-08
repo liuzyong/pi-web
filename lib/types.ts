@@ -31,6 +31,15 @@ export interface ImageContent {
   };
 }
 
+export interface FileContent {
+  type: "file";
+  name: string;
+  mimeType: string;
+  size: number;
+  // data:<mime>;base64,XXX or external URL — must be a downloadable/previewable href
+  url: string;
+}
+
 export interface ThinkingContent {
   type: "thinking";
   thinking: string;
@@ -43,11 +52,11 @@ export interface ToolCallContent {
   input: Record<string, unknown>;
 }
 
-export type AssistantContentBlock = TextContent | ImageContent | ThinkingContent | ToolCallContent;
+export type AssistantContentBlock = TextContent | ImageContent | FileContent | ThinkingContent | ToolCallContent;
 
 export interface UserMessage {
   role: "user";
-  content: string | (TextContent | ImageContent)[];
+  content: string | (TextContent | ImageContent | FileContent)[];
   timestamp?: number;
 }
 

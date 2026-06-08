@@ -2,8 +2,27 @@ import { NextResponse } from "next/server";
 import { resolveSessionPath } from "@/lib/session-reader";
 import { startRpcSession, getRpcSession } from "@/lib/rpc-manager";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
+import {
+  saveAttachments,
+  type AttachedFileInput,
+} from "@/lib/attachment-store";
 
-// POST /api/agent/[id] - Send a command to an existing session
+function isAttachedFileInput(x: unknown): x is AttachedFileInput {
+  if (!x || typeof x !== "object") return false;
+  const f = x as Record<string, unknown>;
+  return (
+    typeof f.name === "string" &&
+    typeof f.mimeType === "string" &&
+    typeof f.size === "number" &&
+    typeof f.data === "string"
+  );
+}
+
+// POST /api/agent/[id] - Send a command to an existing session.
+// Accepts an optional `files` payload (same shape as /api/agent/new):
+// files are persisted to disk *before* dispatching the command, and the
+// response includes `attachedFilePaths` so the caller can render or link
+// them without re-deriving paths.
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -11,13 +30,45 @@ export async function POST(
   const { id } = await params;
 
   try {
-    const body = await req.json() as { type: string; [key: string]: unknown };
+    const body = (await req.json()) as {
+      type: string;
+      message?: string;
+      files?: AttachedFileInput[];
+      [key: string]: unknown;
+    };
+    const { files, ...command } = body;
+
+    // Defensive type-guard: drop anything that doesn't look like a file blob
+    // rather than abort the whole send. Real validation lives client-side.
+    const safeFiles: AttachedFileInput[] = Array.isArray(files)
+      ? files.filter(isAttachedFileInput)
+      : [];
+
+    // Persist attached files to disk *before* dispatching the command so the
+    // agent can immediately Read them. Applies to both fast-path (already
+    // running) and slow-path (cold start) below.
+    const saved = await saveAttachments(id, safeFiles);
+
+    // If any files were saved, prepend their absolute paths to the user
+    // message so the LLM knows where to Read them. The convention matches
+    // plan B and the /api/agent/new route: "Attached files (use Read tool):\n
+    //   - <absPath>".
+    if (saved.length > 0 && typeof command.message === "string") {
+      const fileList = saved
+        .map((s) => `  - ${s.path}`)
+        .join("\n");
+      command.message = `Attached files (use Read tool):\n${fileList}\n\n${command.message}`;
+    }
 
     // Fast path: already-running session
     const existing = getRpcSession(id);
     if (existing?.isAlive()) {
-      const result = await existing.send(body);
-      return NextResponse.json({ success: true, data: result });
+      const result = await existing.send(command);
+      return NextResponse.json({
+        success: true,
+        data: result,
+        attachedFilePaths: saved,
+      });
     }
 
     const filePath = await resolveSessionPath(id);
@@ -28,9 +79,13 @@ export async function POST(
     const cwd = SessionManager.open(filePath).getHeader()?.cwd ?? process.cwd();
 
     const { session } = await startRpcSession(id, filePath, cwd);
-    const result = await session.send(body);
+    const result = await session.send(command);
 
-    return NextResponse.json({ success: true, data: result });
+    return NextResponse.json({
+      success: true,
+      data: result,
+      attachedFilePaths: saved,
+    });
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }

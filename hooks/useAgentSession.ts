@@ -1,10 +1,33 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect, useReducer } from "react";
-import type { AgentMessage, SessionInfo, SessionTreeNode } from "@/lib/types";
+import type { AgentMessage, SessionInfo, SessionTreeNode, TextContent, ImageContent, FileContent } from "@/lib/types";
 import { normalizeToolCalls } from "@/lib/normalize";
-import { sendAgentCommand } from "@/lib/agent-client";
+import { sendAgentCommand, sendAgentCommandWithAttachments } from "@/lib/agent-client";
 import type { ToolEntry } from "@/components/ToolPanel";
+
+/**
+ * Replace dataURL urls in the most recent user message's `file` content blocks
+ * with the server-returned `attachedFilePaths` urls, matched by `name`.
+ * If the server returned no paths (e.g. one or more files failed to save), the
+ * original dataURL is preserved so the user can still download the file.
+ */
+function backfillLastUserFileBlockUrls(
+  prev: AgentMessage[],
+  attachedFilePaths: { name: string; url: string }[],
+): AgentMessage[] {
+  if (!attachedFilePaths.length || prev.length === 0) return prev;
+  const lastIdx = prev.length - 1;
+  return prev.map((msg, i) => {
+    if (i !== lastIdx || typeof msg.content === "string") return msg;
+    const newContent = (msg.content as (TextContent | ImageContent | FileContent)[]).map((block) => {
+      if (block.type !== "file") return block;
+      const match = attachedFilePaths.find((p) => p.name === block.name);
+      return match ? { ...block, url: match.url } : block;
+    });
+    return { ...msg, content: newContent } as AgentMessage;
+  });
+}
 
 export interface SessionData {
   sessionId: string;
@@ -80,6 +103,14 @@ export interface AttachedImage {
   data: string;
   mimeType: string;
   previewUrl: string;
+}
+
+export interface AttachedFile {
+  name: string;
+  mimeType: string;
+  size: number;
+  data: string;
+  url: string;
 }
 
 export function useAgentSession(opts: UseAgentSessionOptions) {
@@ -331,15 +362,21 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, [loadSession, onAgentEnd]);
   handleAgentEventRef.current = handleAgentEvent;
 
-  const handleSend = useCallback(async (message: string, images?: AttachedImage[]) => {
-    if (!message.trim() && !images?.length) return;
+  const handleSend = useCallback(async (message: string, images?: AttachedImage[], files?: AttachedFile[]) => {
+    if (!message.trim() && !images?.length && !files?.length) return;
     if (agentRunning) return;
 
     const imageBlocks = images?.map((img) => ({ type: "image" as const, source: { type: "base64" as const, media_type: img.mimeType, data: img.data } }));
+    const fileBlocks = files?.map((f) => ({ type: "file" as const, name: f.name, mimeType: f.mimeType, size: f.size, url: f.url }));
+    const hasBlocks = (imageBlocks?.length ?? 0) > 0 || (fileBlocks?.length ?? 0) > 0;
     const userMsg: AgentMessage = {
       role: "user",
-      content: imageBlocks?.length
-        ? [...(message.trim() ? [{ type: "text" as const, text: message }] : []), ...imageBlocks]
+      content: hasBlocks
+        ? [
+            ...(message.trim() ? [{ type: "text" as const, text: message }] : []),
+            ...(imageBlocks ?? []),
+            ...(fileBlocks ?? []),
+          ]
         : message,
       timestamp: Date.now(),
     };
@@ -350,6 +387,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     pendingScrollToUserRef.current = true;
 
     const piImages = images?.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }));
+    const piFiles = files?.map((f) => ({ type: "file" as const, name: f.name, mimeType: f.mimeType, size: f.size, data: f.data }));
 
     try {
       if (isNew && newSessionCwd) {
@@ -366,14 +404,18 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             message,
             toolNames,
             ...(piImages?.length ? { images: piImages } : {}),
+            ...(piFiles?.length ? { files: piFiles } : {}),
             ...(selectedModel ? { provider: selectedModel.provider, modelId: selectedModel.modelId } : {}),
             ...(thinkingLevel !== "auto" ? { thinkingLevel } : {}),
           }),
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const result = await res.json() as { sessionId: string };
+        const result = await res.json() as { sessionId: string; attachedFilePaths?: { name: string; url: string }[] };
         const realId = result.sessionId;
         sessionIdRef.current = realId;
+        if (result.attachedFilePaths?.length) {
+          setMessages((prev) => backfillLastUserFileBlockUrls(prev, result.attachedFilePaths!));
+        }
         connectEvents(realId);
         onSessionCreated?.({
           id: realId,
@@ -387,11 +429,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         });
       } else if (session) {
         connectEvents(session.id);
-        await sendAgentCommand(session.id, {
+        const { attachedFilePaths } = await sendAgentCommandWithAttachments(session.id, {
           type: "prompt",
           message,
           ...(piImages?.length ? { images: piImages } : {}),
+          ...(piFiles?.length ? { files: piFiles } : {}),
         });
+        if (attachedFilePaths.length) {
+          setMessages((prev) => backfillLastUserFileBlockUrls(prev, attachedFilePaths));
+        }
       }
     } catch (e) {
       console.error("Failed to send message:", e);
@@ -479,33 +525,75 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [isCompacting, loadSession]);
 
-  const handleSteer = useCallback(async (message: string, images?: AttachedImage[]) => {
+  const handleSteer = useCallback(async (message: string, images?: AttachedImage[], files?: AttachedFile[]) => {
     const sid = sessionIdRef.current;
     if (!sid) return;
-    setMessages((prev) => [...prev, { role: "user", content: `[steer] ${message}`, timestamp: Date.now() } as AgentMessage]);
+    const imageBlocks = images?.map((img) => ({ type: "image" as const, source: { type: "base64" as const, media_type: img.mimeType, data: img.data } }));
+    const fileBlocks = files?.map((f) => ({ type: "file" as const, name: f.name, mimeType: f.mimeType, size: f.size, url: f.url }));
+    const hasBlocks = (imageBlocks?.length ?? 0) > 0 || (fileBlocks?.length ?? 0) > 0;
+    setMessages((prev) => [
+      ...prev,
+      {
+        role: "user",
+        content: hasBlocks
+          ? [
+              { type: "text" as const, text: `[steer] ${message}` },
+              ...(imageBlocks ?? []),
+              ...(fileBlocks ?? []),
+            ]
+          : `[steer] ${message}`,
+        timestamp: Date.now(),
+      } as AgentMessage,
+    ]);
     const piImages = images?.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }));
+    const piFiles = files?.map((f) => ({ type: "file" as const, name: f.name, mimeType: f.mimeType, size: f.size, data: f.data }));
     try {
-      await sendAgentCommand(sid, {
+      const { attachedFilePaths } = await sendAgentCommandWithAttachments(sid, {
         type: "steer",
         message,
         ...(piImages?.length ? { images: piImages } : {}),
+        ...(piFiles?.length ? { files: piFiles } : {}),
       });
+      if (attachedFilePaths.length) {
+        setMessages((prev) => backfillLastUserFileBlockUrls(prev, attachedFilePaths));
+      }
     } catch (e) {
       console.error("Failed to steer:", e);
     }
   }, []);
 
-  const handleFollowUp = useCallback(async (message: string, images?: AttachedImage[]) => {
+  const handleFollowUp = useCallback(async (message: string, images?: AttachedImage[], files?: AttachedFile[]) => {
     const sid = sessionIdRef.current;
     if (!sid) return;
-    setMessages((prev) => [...prev, { role: "user", content: message, timestamp: Date.now() } as AgentMessage]);
+    const imageBlocks = images?.map((img) => ({ type: "image" as const, source: { type: "base64" as const, media_type: img.mimeType, data: img.data } }));
+    const fileBlocks = files?.map((f) => ({ type: "file" as const, name: f.name, mimeType: f.mimeType, size: f.size, url: f.url }));
+    const hasBlocks = (imageBlocks?.length ?? 0) > 0 || (fileBlocks?.length ?? 0) > 0;
+    setMessages((prev) => [
+      ...prev,
+      {
+        role: "user",
+        content: hasBlocks
+          ? [
+              { type: "text" as const, text: message },
+              ...(imageBlocks ?? []),
+              ...(fileBlocks ?? []),
+            ]
+          : message,
+        timestamp: Date.now(),
+      } as AgentMessage,
+    ]);
     const piImages = images?.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }));
+    const piFiles = files?.map((f) => ({ type: "file" as const, name: f.name, mimeType: f.mimeType, size: f.size, data: f.data }));
     try {
-      await sendAgentCommand(sid, {
+      const { attachedFilePaths } = await sendAgentCommandWithAttachments(sid, {
         type: "follow_up",
         message,
         ...(piImages?.length ? { images: piImages } : {}),
+        ...(piFiles?.length ? { files: piFiles } : {}),
       });
+      if (attachedFilePaths.length) {
+        setMessages((prev) => backfillLastUserFileBlockUrls(prev, attachedFilePaths));
+      }
     } catch (e) {
       console.error("Failed to follow up:", e);
     }
