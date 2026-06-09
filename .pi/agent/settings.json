@@ -1,6 +1,6 @@
 {
   "lastChangelogVersion": "0.75.5",
-  "defaultProvider": "cvicse-glm",
-  "defaultModel": "gemma4",
+  "defaultProvider": "cvicse-vl",
+  "defaultModel": "qwen3.6-plus",
   "defaultThinkingLevel": "medium"
 }
