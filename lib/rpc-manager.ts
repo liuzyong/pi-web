@@ -70,9 +70,16 @@ export class AgentSessionWrapper {
 
     switch (type) {
       case "prompt": {
-        // Fire and forget — events come via subscribe
         const promptImages = command.images as Array<{ type: "image"; data: string; mimeType: string }> | undefined;
-        this.inner.prompt(command.message as string, promptImages?.length ? { images: promptImages } : undefined).catch(() => {});
+        if (promptImages?.length) {
+          console.log("[rpc-manager] Sending %d image(s) to pi-agent prompt:", promptImages.length);
+          promptImages.forEach((img, i) => console.log("  img[%d]: mime=%s, data.length=%d", i, img.mimeType, img.data?.length));
+        }
+        const msgText = command.message as string;
+        console.log("[rpc-manager] Message text (%d chars):", msgText?.length);
+        // Log first 200 chars of message to show attached file paths
+        if (msgText) console.log(msgText.slice(0, 300));
+        this.inner.prompt(msgText, promptImages?.length ? { images: promptImages } : undefined).catch((err: unknown) => { console.error("[rpc-manager] prompt error:", err); });
         return null;
       }
 
