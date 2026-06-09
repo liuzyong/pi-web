@@ -34,7 +34,7 @@ function isAttachedFileInput(x: unknown): x is AttachedFileInput {
 export async function POST(req: Request) {
   try {
     const body = (await req.json()) as NewSessionBody;
-    const { cwd, files, ...command } = body;
+    const { cwd, files, images, ...command } = body;
 
     if (!cwd || typeof cwd !== "string") {
       return NextResponse.json({ error: "cwd is required" }, { status: 400 });
@@ -49,6 +49,28 @@ export async function POST(req: Request) {
       ? files.filter(isAttachedFileInput)
       : [];
 
+    // Convert uploaded images to the same AttachedFileInput format so they
+    // are saved to disk and their paths are prepended to the message —
+    // exactly like regular file attachments. This lets the LLM use the Read
+    // tool to load them, which works even for models that don't support
+    // native vision input.
+    const imageFiles: AttachedFileInput[] = (Array.isArray(images) ? images : [])
+      .filter((img): img is { data: string; mimeType: string } =>
+        img && typeof img.data === "string" && typeof img.mimeType === "string"
+      )
+      .map((img, i) => {
+        const ext = img.mimeType.split("/")[1] || "png";
+        return {
+          name: `image-${i}.${ext}`,
+          mimeType: img.mimeType,
+          size: Math.ceil((img.data.length / 4) * 3),
+          data: img.data,
+        };
+      });
+
+    // Merge with regular file attachments
+    const allFiles = [...safeFiles, ...imageFiles];
+
     // Use a one-time key so startRpcSession's lock doesn't conflict with real session ids
     const { provider, modelId, toolNames, thinkingLevel, ...promptCommand } = command as { provider?: string; modelId?: string; toolNames?: string[]; thinkingLevel?: string; [key: string]: unknown };
 
@@ -60,13 +82,13 @@ export async function POST(req: Request) {
     // a file request under a brand-new cwd would 403 for up to the cache TTL.
     globalThis.__piAllowedRootsCache?.roots.add(cwd);
 
-    // Persist attached files to disk *before* dispatching the prompt so the
-    // agent can immediately Read them. Per-file failures are logged inside
+    // Persist attached files and images to disk *before* dispatching the prompt
+    // so the agent can immediately Read them. Per-file failures are logged inside
     // `saveAttachments` and excluded from the result rather than aborting.
-    const saved = await saveAttachments(realSessionId, safeFiles);
+    const saved = await saveAttachments(realSessionId, allFiles);
 
-    // If any files were saved, prepend their absolute paths to the user
-    // message so the LLM knows where to Read them. The convention matches
+    // If any files or images were saved, prepend their absolute paths to the
+    // user message so the LLM knows where to Read them. The convention matches
     // plan B: "Attached files (use Read tool):\n  - <absPath>".
     if (saved.length > 0 && typeof promptCommand.message === "string") {
       const fileList = saved

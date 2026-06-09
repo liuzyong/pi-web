@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from "fs";
+import { join } from "path";
 import { AuthStorage, ModelRegistry, SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 
@@ -14,13 +16,30 @@ export async function GET() {
     const agentDir = getAgentDir();
     const authStorage = AuthStorage.create();
     const registry = ModelRegistry.create(authStorage);
+
+    // Read explicitly configured providers from models.json
+    const modelsJsonPath = join(agentDir, "models.json");
+    let configuredProviders = new Set<string>();
+    if (existsSync(modelsJsonPath)) {
+      try {
+        const parsed = JSON.parse(readFileSync(modelsJsonPath, "utf-8"));
+        if (parsed?.providers) {
+          configuredProviders = new Set(Object.keys(parsed.providers));
+        }
+      } catch { /* ignore */ }
+    }
+
     const available = registry.getAvailable();
-    modelList = available.map((m: { id: string; name: string; provider: string }) => ({
+    const filtered = configuredProviders.size > 0
+      ? available.filter((m: { provider: string }) => configuredProviders.has(m.provider))
+      : available;
+
+    modelList = filtered.map((m: { id: string; name: string; provider: string }) => ({
       id: m.id,
       name: m.name,
       provider: m.provider,
     }));
-    for (const m of available) {
+    for (const m of filtered) {
       const key = `${m.provider}:${m.id}`;
       nameMap.set(key, m.name);
       thinkingLevels[key] = getSupportedThinkingLevels(m);
@@ -31,7 +50,7 @@ export async function GET() {
     const provider = settings.getDefaultProvider();
     const modelId = settings.getDefaultModel();
     if (provider) {
-      defaultModel = { provider, modelId: modelId ?? available[0]?.id ?? "" };
+      defaultModel = { provider, modelId: modelId ?? filtered[0]?.id ?? "" };
     }
   } catch { /* return empty */ }
 
