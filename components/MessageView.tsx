@@ -8,6 +8,7 @@ import { vs } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import { useTheme } from "@/hooks/useTheme";
 import { getFileIcon } from "./FileIcons";
+import { MarkdownBody } from "./MarkdownBody";
 import type {
   AgentMessage,
   UserMessage,

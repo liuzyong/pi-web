@@ -1,6 +1,6 @@
 {
   "lastChangelogVersion": "0.75.5",
-  "defaultProvider": "cvicse-vl",
-  "defaultModel": "qwen3.6-plus",
+  "defaultProvider": "cvicse-out",
+  "defaultModel": "deepdeek-v4-pro",
   "defaultThinkingLevel": "medium"
 }
