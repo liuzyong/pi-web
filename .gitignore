@@ -48,5 +48,6 @@ outputs/
 output/
 .pi/agent/sessions
 .pi/agent/bin/
+.pi/agent/models.json
 .llm-wiki/
 server.log
